@@ -1,0 +1,22 @@
+# Build artifacts
+build/
+dist/
+*.o
+
+# Pak binary and runtime libs
+ports/tg5040/pak/bin/nimbus
+ports/tg5040/pak/lib/
+
+# Third party build artifacts (keep source)
+third_party/apostrophe/build/
+
+# OS files
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Temp files
+*.swp
+*~
