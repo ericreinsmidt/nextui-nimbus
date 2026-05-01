@@ -18,6 +18,25 @@ Built with the [Apostrophe](https://github.com/Helaas/Apostrophe) UI toolkit. We
 - **Scrollable layout** — all weather data on a single custom-drawn screen
 - **Native NextUI look** — status bar with clock, battery, and WiFi indicators
 
+## Supported Devices
+
+| Device | Platform | Status |
+|--------|----------|--------|
+| TrimUI Brick | tg5040 | Working |
+| TrimUI Smart Pro | tg5040 | Working |
+
+## Screenshots
+
+| Current | Sun and Moon | 3-Day Forecast |
+|-----------|-------------|----------------|
+| ![Feed List](assets/current.png) | ![Article List](assets/sunrise.png) | ![Article Detail](assets/forecast.png) |
+
+
+| Setup | Location Search | Settings |
+|-----------|-------------|----------------|
+| ![Manage Feed](assets/setup.png) | ![Edit Colors](assets/location.png) | ![About](assets/settings.png) |
+
+
 ## Setup
 
 ### 1. Get an API Key
