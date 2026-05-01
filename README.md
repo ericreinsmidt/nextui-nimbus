@@ -33,10 +33,13 @@ Built with the [Apostrophe](https://github.com/Helaas/Apostrophe) UI toolkit. We
 |-----------|-------------|----------------|
 | ![Feed List](assets/current.png) | ![Article List](assets/sunrise.png) | ![Article Detail](assets/forecast.png) |
 
+| Location Search | Settings |
+|-------------|----------------|
+| ![Edit Colors](assets/location.png) | ![About](assets/settings.png) |
 
-| Setup | Location Search | Settings |
+| Setup | API Key | Complete |
 |-----------|-------------|----------------|
-| ![Manage Feed](assets/setup.png) | ![Edit Colors](assets/location.png) | ![About](assets/settings.png) |
+| ![Manage Feed](assets/setup.png) | ![Edit Colors](assets/api.png) | ![About](assets/complete.png) |
 
 
 ## Setup
