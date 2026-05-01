@@ -1,5 +1,7 @@
 # Nimbus
 
+![Feed List](assets/logo.png)
+
 A weather app for [NextUI](https://github.com/LoveRetro/NextUI) on TrimUI handheld devices.
 
 Built with the [Apostrophe](https://github.com/Helaas/Apostrophe) UI toolkit. Weather data provided by [WeatherAPI.com](https://www.weatherapi.com).
