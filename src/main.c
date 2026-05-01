@@ -16,6 +16,9 @@
 #include "qrcodegen.h"
 #include "qrcodegen.c"
 
+#define PAKKIT_UI_IMPLEMENTATION
+#include "pakkit_ui.h"
+
 #include <string.h>
 #include <curl/curl.h>
 #include <sys/stat.h>
@@ -620,6 +623,7 @@ static int show_api_key_setup(void) {
     TTF_Font *font_large = ap_get_font(AP_FONT_LARGE);
     TTF_Font *font_med   = ap_get_font(AP_FONT_MEDIUM);
     TTF_Font *font_small = ap_get_font(AP_FONT_SMALL);
+    TTF_Font *font_tiny  = ap_get_font(AP_FONT_TINY);
 
     ap_theme *theme = ap_get_theme();
     ap_color text_color = theme->text;
@@ -653,7 +657,8 @@ static int show_api_key_setup(void) {
         y += TTF_FontHeight(font_small) + pad * 3;
 
         /* QR code — size to fit between instruction text and footer */
-        int footer_h = AP_DS(AP__PILL_SIZE + 5);
+        int hint_font_h = TTF_FontHeight(font_tiny);
+        int footer_h = hint_font_h + pad * 2;
         int avail_h = sh - y - footer_h - TTF_FontHeight(font_med) - TTF_FontHeight(font_small) - pad * 6;
         int qr_max = avail_h;
         if (qr_max > sw / 2) qr_max = sw / 2;
@@ -671,11 +676,9 @@ static int show_api_key_setup(void) {
         int wait_w = ap_measure_text(font_small, wait);
         ap_draw_text(font_small, wait, (sw - wait_w) / 2, y, hint_color);
 
-        /* Footer */
-        ap_footer_item footer[] = {
-            {.button = AP_BTN_B,.label = "CANCEL" },
-        };
-        ap_draw_footer(footer, 1);
+        /* Minimal hint */
+        int hint_y = sh - TTF_FontHeight(font_tiny) - pad;
+        ap_draw_text(font_tiny, "B: Cancel", pad * 2, hint_y, hint_color);
 
         ap_present();
     }
@@ -994,26 +997,29 @@ static int fetch_weather(void) {
  * ----------------------------------------------------------------------- */
 
 static void show_about(void) {
-    ap_detail_info_pair info[] = {
+    pakkit_info_pair info[] = {
         {.key = "Version",.value = NIMBUS_VERSION },
         {.key = "Platform",.value = AP_PLATFORM_NAME },
-        {.key = "UI",.value = "Apostrophe" },
+        {.key = "UI",.value = "PakKit / Apostrophe" },
         {.key = "Data",.value = "WeatherAPI.com" },
         {.key = "License",.value = "MIT" },
     };
-    ap_detail_section sections[] = {
-        {.type = AP_SECTION_INFO,.title = "Nimbus",.info_pairs = info,.info_count = 5 },
-        {.type = AP_SECTION_DESCRIPTION,.title = "About",.description = "A weather app for NextUI on TrimUI "
-                         "handheld devices.\n\n"
-                         "Nimbus by Eric Reinsmidt\n"
-                         "Built with Apostrophe by Helaas\n"
-                         "For NextUI by LoveRetro" },
+
+    const char *credits[] = {
+        "Nimbus by Eric Reinsmidt",
+        "Built with PakKit and Apostrophe",
+        "For NextUI by LoveRetro",
     };
-    ap_footer_item footer[] = {{.button = AP_BTN_B,.label = "BACK" }};
-    ap_detail_opts opts = {.title = "About Nimbus",.sections = sections,.section_count = 2,.footer = footer,.footer_count = 1,.status_bar = &g_status_bar,
+
+    pakkit_detail_opts opts = {
+.title = "Nimbus",
+.subtitle = "Weather app for NextUI",
+.info = info,
+.info_count = 5,
+.credits = credits,
+.credit_count = 3,
     };
-    ap_detail_result result;
-    ap_detail_screen(&opts, &result);
+    pakkit_detail_screen(&opts);
 }
 
 /* -----------------------------------------------------------------------
@@ -1144,19 +1150,15 @@ static void show_settings(void) {
         snprintf(units_label, sizeof(units_label), "Units: %s",
                  g_settings.use_fahrenheit ? "\xc2\xb0""F" : "\xc2\xb0""C");
 
-        ap_selection_option options[] = {
-            {.label = units_label,.value = NULL },
-            {.label = "Set Location",.value = NULL },
-            {.label = "Change API Key",.value = NULL },
-            {.label = "About",.value = NULL },
-        };
-        ap_footer_item footer[] = {
-            {.button = AP_BTN_B,.label = "BACK" },
-            {.button = AP_BTN_A,.label = "SELECT",.is_confirm = true },
+        pakkit_menu_item items[] = {
+            {.label = units_label },
+            {.label = "Set Location" },
+            {.label = "Change API Key" },
+            {.label = "About" },
         };
 
-        ap_selection_result result;
-        int rc = ap_selection("Settings", options, 4, footer, 2, &result);
+        pakkit_menu_result result;
+        int rc = pakkit_menu("Settings", items, 4, &result);
         if (rc != AP_OK) return;
 
         switch (result.selected_index) {
@@ -1229,16 +1231,10 @@ static void show_weather_screen(void) {
         ap_color text_color = theme->text;
         ap_color hint_color = theme->hint;
 
-        ap_draw_status_bar(&g_status_bar);
-        int sb_h = ap_get_status_bar_height();
+        int hint_font_h = TTF_FontHeight(font_tiny);
+        int footer_h = hint_font_h + pad * 2;
 
-        ap_footer_item footer[] = {
-            {.button = AP_BTN_B,.label = "QUIT" },
-            {.button = AP_BTN_Y,.label = "MENU" },
-        };
-        int footer_h = AP_DS(AP__PILL_SIZE + 5);
-
-        int content_top = sb_h + pad;
+        int content_top = pad;
         int content_bottom = sh - footer_h;
         int content_h = content_bottom - content_top;
 
@@ -1405,7 +1401,13 @@ static void show_weather_screen(void) {
         }
 
         SDL_RenderSetClipRect(ap__g.renderer, NULL);
-        ap_draw_footer(footer, 2);
+
+        /* Minimal text hints */
+        int hint_y = sh - hint_font_h - pad;
+        ap_draw_text(font_tiny, "B: Quit", pad * 2, hint_y, hint_color);
+        int menu_w = ap_measure_text(font_tiny, "Y: Menu");
+        ap_draw_text(font_tiny, "Y: Menu", sw - menu_w - pad * 2, hint_y, hint_color);
+
         ap_present();
     }
 }

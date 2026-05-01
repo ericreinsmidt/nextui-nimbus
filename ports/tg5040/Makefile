@@ -24,6 +24,7 @@ SRC        := $(WORKSPACE)/src/main.c
 AP_INCLUDE := $(WORKSPACE)/third_party/apostrophe/include
 CJSON_DIR  := $(WORKSPACE)/third_party/cjson
 QRGEN_DIR  := $(WORKSPACE)/third_party/qrcodegen
+PAKKIT_DIR := $(WORKSPACE)/third_party/pakkit/include
 DEPS       := $(AP_INCLUDE)/apostrophe.h $(AP_INCLUDE)/apostrophe_widgets.h
 
 CFLAGS := -std=gnu11 -O2 -Wall -Wextra -Wno-unused-parameter \
@@ -33,6 +34,7 @@ CFLAGS := -std=gnu11 -O2 -Wall -Wextra -Wno-unused-parameter \
 	-I$(AP_INCLUDE) \
 	-I$(CJSON_DIR) \
 	-I$(QRGEN_DIR) \
+	-I$(PAKKIT_DIR) \
 	$(SDL_CFLAGS) $(CURL_CFLAGS)
 
 LDFLAGS := $(SDL_LDFLAGS) $(CURL_LDFLAGS) -lpthread -ldl -lm
