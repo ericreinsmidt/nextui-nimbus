@@ -1,6 +1,22 @@
 {
-  "label": "Nimbus",
-  "icon": "weather",
+  "name": "Nimbus",
+  "version": "v0.1.0",
+  "type": "TOOL",
   "description": "Weather app for NextUI",
-  "themeColor": "#4A90D9"
+  "author": "Eric Reinsmidt",
+  "repo_url": "https://github.com/ericreinsmidt/nextui-nimbus",
+  "release_filename": "Nimbus.tg5040.pak.zip",
+  "changelog": {
+    "v0.1.0": "Initial version"
+  },
+  "screenshots": [
+    "assets/current.png",
+    "assets/sunrise.png",
+    "assets/forecast.png",
+    "assets/location.png",
+    "assets/settings.png"
+  ],
+  "platforms": [
+    "tg5040"
+  ]
 }
