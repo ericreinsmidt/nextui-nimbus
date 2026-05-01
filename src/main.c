@@ -162,9 +162,6 @@ static SDL_Texture    *g_icon_texture             = NULL;
 static SDL_Texture    *g_sunrise_icon             = NULL;
 static SDL_Texture    *g_sunset_icon              = NULL;
 
-static ap_status_bar_opts g_status_bar = {.show_battery = true,.show_wifi    = true,
-};
-
 /* -----------------------------------------------------------------------
  * String helpers
  * ----------------------------------------------------------------------- */
@@ -583,17 +580,11 @@ static int show_api_key_setup(void) {
 
     char ip[64] = {0};
     if (wifi_strength == 0 || get_local_ip(ip, sizeof(ip)) != 0) {
-        ap_footer_item footer[] = {
-            {.button = AP_BTN_B,.label = "QUIT" },
-        };
-        ap_message_opts msg = {.message = "WiFi not connected.\n\n"
+        pakkit_message("WiFi not connected.\n\n"
                        "Connect to WiFi and restart Nimbus,\n"
                        "or manually create:\n\n"
                        ".userdata/tg5040/nimbus/\n"
-                       "  config/api_key.txt",.footer = footer,.footer_count = 1,
-        };
-        ap_confirm_result cr;
-        ap_confirmation(&msg, &cr);
+                       "  config/api_key.txt", "Quit");
         return -1;
     }
 
@@ -603,16 +594,10 @@ static int show_api_key_setup(void) {
 
     setup_server_t srv;
     if (setup_server_start(&srv) != 0) {
-        ap_footer_item footer[] = {
-            {.button = AP_BTN_B,.label = "QUIT" },
-        };
-        ap_message_opts msg = {.message = "Could not start setup server.\n\n"
+        pakkit_message("Could not start setup server.\n\n"
                        "Manually create:\n"
                        ".userdata/tg5040/nimbus/\n"
-                       "  config/api_key.txt",.footer = footer,.footer_count = 1,
-        };
-        ap_confirm_result cr;
-        ap_confirmation(&msg, &cr);
+                       "  config/api_key.txt", "Quit");
         return -1;
     }
 
@@ -1099,17 +1084,13 @@ static void search_and_set_location(void) {
     int count = search_locations(kb_result.text, results, MAX_SEARCH_RESULTS);
 
     if (count == 0) {
-        ap_footer_item footer[] = {{.button = AP_BTN_A,.label = "OK",.is_confirm = true }};
-        ap_message_opts msg = {.message = "No locations found.\nTry a different search.",.footer = footer,.footer_count = 1 };
-        ap_confirm_result cr;
-        ap_confirmation(&msg, &cr);
+        pakkit_message("No locations found.\nTry a different search.", "OK");
         return;
     }
 
     static char result_labels[MAX_SEARCH_RESULTS][512];
-    ap_list_item items[MAX_SEARCH_RESULTS];
+    pakkit_list_item items[MAX_SEARCH_RESULTS];
     for (int i = 0; i < count; i++) {
-        memset(&items[i], 0, sizeof(items[i]));
         if (results[i].region[0])
             snprintf(result_labels[i], sizeof(result_labels[i]), "%s, %s, %s",
                      results[i].name, results[i].region, results[i].country);
@@ -1119,16 +1100,16 @@ static void search_and_set_location(void) {
         items[i].label = result_labels[i];
     }
 
-    ap_footer_item footer[] = {
-        {.button = AP_BTN_B,.label = "CANCEL" },
-        {.button = AP_BTN_A,.label = "SELECT",.is_confirm = true },
+    pakkit_hint hints[] = {
+        {.button = "B",.label = "Cancel" },
+        {.button = "A",.label = "Select" },
     };
-    ap_list_opts opts = ap_list_default_opts("Select Location", items, count);
-    opts.footer = footer; opts.footer_count = 2; opts.status_bar = &g_status_bar;
+    pakkit_list_opts opts = {.title = "Select Location",.hints = hints,.hint_count = 2,.secondary_button = AP_BTN_NONE,.tertiary_button = AP_BTN_NONE,
+    };
 
-    ap_list_result result;
-    rc = ap_list(&opts, &result);
-    if (rc != AP_OK || result.action == AP_ACTION_BACK || result.selected_index < 0) return;
+    pakkit_list_result result;
+    rc = pakkit_list(&opts, items, count, &result);
+    if (rc != AP_OK || result.selected_index < 0) return;
 
     search_result_t *sel = &results[result.selected_index];
     if (sel->region[0])
@@ -1244,9 +1225,10 @@ static void show_weather_screen(void) {
         int y = content_top - scroll_y;
 
         if (!g_weather.valid) {
-            ap_draw_text(font_med, "No weather data", pad * 3, y + content_h / 3, hint_color);
+            scroll_y = 0;
+            ap_draw_text(font_med, "No weather data", pad * 3, content_top + content_h / 3, hint_color);
             ap_draw_text(font_small, "Press Y for settings",
-                         pad * 3, y + content_h / 3 + TTF_FontHeight(font_med) + pad, hint_color);
+                         pad * 3, content_top + content_h / 3 + TTF_FontHeight(font_med) + pad, hint_color);
         } else {
             /* Location */
             char location_full[512];
@@ -1465,6 +1447,16 @@ int main(int argc, char *argv[]) {
         snprintf(g_location.name, MAX_LOCATION, "auto:ip");
         g_location.lat_lon[0] = '\0';
         g_location.id = 0;
+    }
+
+    /* Check WiFi before fetching */
+    if (ap__get_wifi_strength() == 0) {
+        pakkit_message("WiFi not connected.\n\n"
+                       "Connect to WiFi and\n"
+                       "reopen Nimbus.", "Quit");
+        ap_quit();
+        curl_global_cleanup();
+        return 0;
     }
 
     fetch_weather();
