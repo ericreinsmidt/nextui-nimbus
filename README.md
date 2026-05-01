@@ -1,6 +1,6 @@
 # Nimbus
 
-![Feed List](assets/logo.png)
+![Nimbus](assets/logo.png)
 
 A weather app for [NextUI](https://github.com/LoveRetro/NextUI) on TrimUI handheld devices.
 
