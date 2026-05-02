@@ -8,17 +8,18 @@ Built with [PakKit](https://github.com/ericreinsmidt/pakkit) and [Apostrophe](ht
 
 ## Features
 
-- **Current conditions** — temperature, feels like, humidity, wind, precipitation, cloud cover, UV index
-- **3-day forecast** — daily high/low, condition, chance of rain with weather icons
+- **Current conditions** -- temperature, feels like, humidity, wind, precipitation, cloud cover, UV index
+- **3-day forecast** -- daily high/low, condition, chance of rain with weather icons
 - **Sunrise & sunset** with inline condition icons
 - **Moon phase** display
-- **°F / °C toggle** in settings
-- **Location search** — search by city name, zip code, or postal code via WeatherAPI
-- **QR code setup** — enter your API key from your phone by scanning a QR code on the device screen
-- **Auto-detect location** — uses IP geolocation on first launch if no location is configured
-- **Weather condition icons** — fetched from WeatherAPI and cached locally
-- **Scrollable layout** — all weather data on a single custom-drawn screen
-- **Minimal UI** — clean custom screens with subtle button hints
+- **F / C toggle** in settings
+- **Location search** -- search by city name, zip code, or postal code via on-screen keyboard
+- **QR code setup** -- enter your API key from your phone by scanning a QR code on the device screen
+- **Auto-detect location** -- uses IP geolocation on first launch if no location is configured
+- **Weather condition icons** -- fetched from WeatherAPI and cached locally
+- **WiFi detection** -- checks for WiFi before fetching weather or starting QR setup
+- **Scrollable layout** -- all weather data on a single custom-drawn screen
+- **Minimal UI** -- clean PakKit screens with subtle button hints
 
 ## Supported Devices
 
@@ -31,16 +32,15 @@ Built with [PakKit](https://github.com/ericreinsmidt/pakkit) and [Apostrophe](ht
 
 | Current | Sun and Moon | 3-Day Forecast |
 |-----------|-------------|----------------|
-| ![Feed List](assets/current.png) | ![Article List](assets/sunrise.png) | ![Article Detail](assets/forecast.png) |
+| ![Current](assets/current.png) | ![Sun and Moon](assets/sunrise.png) | ![Forecast](assets/forecast.png) |
 
 | Location Search | Settings |
 |-------------|----------------|
-| ![Edit Colors](assets/location.png) | ![About](assets/settings.png) |
+| ![Location](assets/location.png) | ![Settings](assets/settings.png) |
 
 | Setup | API Key | Complete |
 |-----------|-------------|----------------|
-| ![Manage Feed](assets/setup.png) | ![Edit Colors](assets/api.png) | ![About](assets/complete.png) |
-
+| ![Setup](assets/setup.png) | ![API Key](assets/api.png) | ![Complete](assets/complete.png) |
 
 ## Setup
 
@@ -50,9 +50,9 @@ Sign up for a free account at [weatherapi.com](https://www.weatherapi.com) and c
 
 ### 2. Install
 
-Download the latest `Nimbus.tg5040.pak.zip` from [Releases](https://github.com/ericreinsmidt/nextui-nimbus/releases).
+Download the latest Nimbus.tg5040.pak.zip from [Releases](https://github.com/ericreinsmidt/nextui-nimbus/releases).
 
-Extract and copy the `Nimbus.pak` folder to your SD card:
+Extract and copy the Nimbus.pak folder to your SD card:
 
     /mnt/SDCARD/Tools/tg5040/Nimbus.pak/
 
@@ -62,7 +62,7 @@ Launch Nimbus from the Tools menu. On first launch you'll see a QR code screen:
 
 1. **Scan the QR code** with your phone (or visit the URL shown on screen)
 2. **Enter your API key** on the web page that opens
-3. **Tap Save** — Nimbus will pick up the key and load your weather
+3. **Tap Save** -- Nimbus will pick up the key and load your weather
 
 Alternatively, you can manually create the file:
 
@@ -89,21 +89,21 @@ On first launch, Nimbus auto-detects your location from your IP address. To chan
 
 ### Settings Menu
 
-- **Units** — toggle between °F and °C
-- **Set Location** — search and select a new location
-- **Change API Key** — re-run the QR code setup to enter a new key
-- **About** — version and credits
+- **Units** -- toggle between F and C
+- **Set Location** -- search and select a new location
+- **Change API Key** -- re-run the QR code setup to enter a new key
+- **About** -- version and credits
 
 ## Device Paths
 
 | Path | Description |
 |------|-------------|
-| `/mnt/SDCARD/Tools/tg5040/Nimbus.pak/` | App installation |
-| `/mnt/SDCARD/.userdata/tg5040/nimbus/config/api_key.txt` | API key |
-| `/mnt/SDCARD/.userdata/tg5040/nimbus/config/location.txt` | Saved location |
-| `/mnt/SDCARD/.userdata/tg5040/nimbus/config/settings.txt` | User settings |
-| `/mnt/SDCARD/.userdata/tg5040/nimbus/cache/` | Cached weather icons |
-| `/mnt/SDCARD/.userdata/tg5040/logs/nimbus.txt` | Log file (current session only) |
+| /mnt/SDCARD/Tools/tg5040/Nimbus.pak/ | App installation |
+| /mnt/SDCARD/.userdata/tg5040/nimbus/config/api_key.txt | API key |
+| /mnt/SDCARD/.userdata/tg5040/nimbus/config/location.txt | Saved location |
+| /mnt/SDCARD/.userdata/tg5040/nimbus/config/settings.txt | User settings |
+| /mnt/SDCARD/.userdata/tg5040/nimbus/cache/ | Cached weather icons |
+| /mnt/SDCARD/.userdata/tg5040/logs/nimbus.txt | Log file (current session only) |
 
 ## Building from Source
 
@@ -146,11 +146,11 @@ Copy the binary and CA certs into the pak:
 ### Create Release Zip
 
     mkdir -p dist
-    cd ports/tg5040/pak && zip -r ../../../dist/Nimbus.tg5040.pak.zip . && cd ../../..
+    cd ports/tg5040/pak && zip -r../../../dist/Nimbus.tg5040.pak.zip. && cd../../..
 
 ### Deploy
 
-Copy `ports/tg5040/pak/` to `/Tools/tg5040/Nimbus.pak/` on your SD card.
+Copy ports/tg5040/pak/ to /Tools/tg5040/Nimbus.pak/ on your SD card.
 
 ## Tech Stack
 
@@ -165,8 +165,9 @@ Copy `ports/tg5040/pak/` to `/Tools/tg5040/Nimbus.pak/` on your SD card.
 ## Credits
 
 - **Nimbus** by Eric Reinsmidt
-- **Apostrophe** UI toolkit by [Helaas](https://github.com/Helaas)
-- **NextUI** by [LoveRetro](https://github.com/LoveRetro)
+- **[PakKit](https://github.com/ericreinsmidt/pakkit)** UI components by Eric Reinsmidt
+- **[Apostrophe](https://github.com/Helaas/Apostrophe)** UI toolkit by [Helaas](https://github.com/Helaas)
+- **[NextUI](https://github.com/LoveRetro/NextUI)** by [LoveRetro](https://github.com/LoveRetro)
 - Weather data by [WeatherAPI.com](https://www.weatherapi.com)
 - QR code generation by [nayuki](https://github.com/nayuki/QR-Code-generator)
 - JSON parsing by [DaveGamble/cJSON](https://github.com/DaveGamble/cJSON)
@@ -174,4 +175,4 @@ Copy `ports/tg5040/pak/` to `/Tools/tg5040/Nimbus.pak/` on your SD card.
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for details.
+MIT -- see [LICENSE](LICENSE) for details.
