@@ -15,6 +15,7 @@
     "v0.1.0": "Initial version."
   },
   "screenshots": [
+    "assets/logo.png",
     "assets/screenshots/current.png",
     "assets/screenshots/forecast.png",
     "assets/screenshots/location.png",
