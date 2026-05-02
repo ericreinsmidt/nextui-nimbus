@@ -36,7 +36,7 @@
  * Constants
  * ----------------------------------------------------------------------- */
 
-#define NIMBUS_VERSION   "0.1.0"
+#define NIMBUS_VERSION   "0.2.0"
 #define MAX_PATH_LEN     1280
 #define MAX_LOCATION     256
 #define MAX_LINE         512
