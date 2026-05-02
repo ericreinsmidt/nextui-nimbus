@@ -1076,12 +1076,15 @@ static int search_locations(const char *query, search_result_t *results, int max
 }
 
 static void search_and_set_location(void) {
-    ap_keyboard_result kb_result;
-    int rc = ap_keyboard("", "City, zip, or postal code", AP_KB_GENERAL, &kb_result);
+    pakkit_keyboard_opts kb_opts = {.prompt = "City, zip, or postal code" };
+    pakkit_keyboard_result kb_result;
+    int rc = pakkit_keyboard("", &kb_opts, &kb_result);
     if (rc != AP_OK || kb_result.text[0] == '\0') return;
 
     search_result_t results[MAX_SEARCH_RESULTS];
     int count = search_locations(kb_result.text, results, MAX_SEARCH_RESULTS);
+
+    /*... rest unchanged... */
 
     if (count == 0) {
         pakkit_message("No locations found.\nTry a different search.", "OK");
