@@ -4,7 +4,7 @@
 
 A weather app for [NextUI](https://github.com/LoveRetro/NextUI) on TrimUI handheld devices.
 
-Built with the [Apostrophe](https://github.com/Helaas/Apostrophe) UI toolkit. Weather data provided by [WeatherAPI.com](https://www.weatherapi.com).
+Built with [PakKit](https://github.com/ericreinsmidt/pakkit) and [Apostrophe](https://github.com/Helaas/Apostrophe). Weather data provided by [WeatherAPI.com](https://www.weatherapi.com).
 
 ## Features
 
@@ -18,7 +18,7 @@ Built with the [Apostrophe](https://github.com/Helaas/Apostrophe) UI toolkit. We
 - **Auto-detect location** — uses IP geolocation on first launch if no location is configured
 - **Weather condition icons** — fetched from WeatherAPI and cached locally
 - **Scrollable layout** — all weather data on a single custom-drawn screen
-- **Native NextUI look** — status bar with clock, battery, and WiFi indicators
+- **Minimal UI** — clean custom screens with subtle button hints
 
 ## Supported Devices
 
@@ -155,7 +155,7 @@ Copy `ports/tg5040/pak/` to `/Tools/tg5040/Nimbus.pak/` on your SD card.
 ## Tech Stack
 
 - **Language:** C (single-file architecture)
-- **UI Toolkit:** [Apostrophe](https://github.com/Helaas/Apostrophe) by Helaas
+- **UI Components:** [PakKit](https://github.com/ericreinsmidt/pakkit) + [Apostrophe](https://github.com/Helaas/Apostrophe) by Helaas
 - **Weather Data:** [WeatherAPI.com](https://www.weatherapi.com) (free tier)
 - **JSON Parsing:** [cJSON](https://github.com/DaveGamble/cJSON)
 - **QR Code Generation:** [QR-Code-generator](https://github.com/nayuki/QR-Code-generator) by nayuki
