@@ -30,17 +30,13 @@ Built with [PakKit](https://github.com/ericreinsmidt/pakkit) and [Apostrophe](ht
 
 ## Screenshots
 
-| Current | Sun and Moon | 3-Day Forecast |
-|-----------|-------------|----------------|
-| ![Current](assets/current.png) | ![Sun and Moon](assets/sunrise.png) | ![Forecast](assets/forecast.png) |
+| Current | Forecast | Location Search |
+|---------|----------|-----------------|
+| ![Current](assets/screenshots/current.png) | ![Forecast](assets/screenshots/forecast.png) | ![Location](assets/screenshots/location.png) |
 
-| Location Search | Settings |
-|-------------|----------------|
-| ![Location](assets/location.png) | ![Settings](assets/settings.png) |
-
-| Setup | API Key | Complete |
-|-----------|-------------|----------------|
-| ![Setup](assets/setup.png) | ![API Key](assets/api.png) | ![Complete](assets/complete.png) |
+| QR Setup | API Key |
+|----------|---------|
+| ![QR Setup](assets/screenshots/qr.png) | ![API Key](assets/screenshots/api.png) |
 
 ## Setup
 
