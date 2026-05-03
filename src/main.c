@@ -41,6 +41,8 @@
 #define MAX_URL          1024
 #define MAX_LABEL        256
 #define MAX_FORECAST_DAYS 3
+#define MAX_HOURS_PER_DAY 24
+#define MAX_HOURS        72
 #define MAX_LOCATIONS    5
 
 #define DEFAULT_BG_R     30
@@ -56,6 +58,12 @@
 #define SCROLL_STEP      20
 #define SETUP_SERVER_PORT 8090
 
+#define TAB_CURRENT  0
+#define TAB_FORECAST 1
+#define TAB_HOURLY   2
+#define TAB_ASTRO    3
+#define TAB_COUNT    4
+
 /* -----------------------------------------------------------------------
  * Data structures
  * ----------------------------------------------------------------------- */
@@ -66,6 +74,30 @@ typedef struct {
     int  id;
     int  is_home;
 } location_t;
+
+typedef struct {
+    char   time[32];        /* "2024-01-15 14:00" */
+    char   hour_label[8];   /* "2 PM" */
+    double temp_f;
+    double temp_c;
+    double feels_like_f;
+    double feels_like_c;
+    int    humidity;
+    double wind_mph;
+    double wind_kph;
+    char   wind_dir[16];
+    int    chance_rain;
+    int    chance_snow;
+    double precip_in;
+    double precip_mm;
+    int    cloud;
+    double uv;
+    int    is_day;
+    char   condition_text[MAX_LABEL];
+    int    condition_code;
+    char   icon_url[MAX_URL];
+    SDL_Texture *icon_texture;
+} hourly_t;
 
 typedef struct {
     char   date[32];
@@ -91,6 +123,7 @@ typedef struct {
     char   moonrise[16];
     char   moonset[16];
     char   moon_phase[32];
+    int    moon_illumination;
 
     SDL_Texture *icon_texture;
 } forecast_day_t;
@@ -100,6 +133,8 @@ typedef struct {
     char region[MAX_LOCATION];
     char country[MAX_LOCATION];
 
+    double loc_lat;
+    double loc_lon;
     double temp_f;
     double temp_c;
     double feels_like_f;
@@ -120,6 +155,9 @@ typedef struct {
 
     forecast_day_t forecast[MAX_FORECAST_DAYS];
     int            forecast_count;
+
+    hourly_t       hours[MAX_HOURS];
+    int            hour_count;
 
     int    valid;
     SDL_Texture *icon_texture;
@@ -187,6 +225,19 @@ static const char *day_name_from_date(const char *date_str) {
     mktime(&tm_val);
     static const char *names[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
     return names[tm_val.tm_wday % 7];
+}
+
+static void format_hour_label(const char *time_str, char *out, size_t out_size) {
+    /* Input: "2024-01-15 14:00", Output: "2 PM" */
+    out[0] = '\0';
+    const char *space = strchr(time_str, ' ');
+    if (!space) return;
+    int hour = 0;
+    sscanf(space + 1, "%d", &hour);
+    if (hour == 0) snprintf(out, out_size, "12 AM");
+    else if (hour < 12) snprintf(out, out_size, "%d AM", hour);
+    else if (hour == 12) snprintf(out, out_size, "12 PM");
+    else snprintf(out, out_size, "%d PM", hour - 12);
 }
 
 /* -----------------------------------------------------------------------
@@ -277,7 +328,6 @@ static int load_locations(void) {
     snprintf(path, sizeof(path), "%s/locations.txt", g_config_dir);
     FILE *f = fopen(path, "r");
     if (!f) {
-        /* Try legacy single-location file */
         snprintf(path, sizeof(path), "%s/location.txt", g_config_dir);
         f = fopen(path, "r");
         if (!f) return -1;
@@ -324,7 +374,6 @@ static int load_locations(void) {
         location_t *loc = &g_locations[g_location_count];
         memset(loc, 0, sizeof(*loc));
 
-        /* Format: Name|lat,lon|id|home */
         char *p1 = strchr(line, '|');
         if (!p1) continue;
         *p1 = '\0';
@@ -359,7 +408,6 @@ static int load_locations(void) {
     }
     fclose(f);
 
-    /* Ensure exactly one home */
     int home_found = 0;
     for (int i = 0; i < g_location_count; i++) {
         if (g_locations[i].is_home) {
@@ -398,25 +446,21 @@ static void save_locations(void) {
 static int get_local_ip(char *out, size_t out_size) {
     struct ifaddrs *ifaddr, *ifa;
     out[0] = '\0';
-
     if (getifaddrs(&ifaddr) == -1) return -1;
-
     for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
         if (ifa->ifa_addr == NULL) continue;
         if (ifa->ifa_addr->sa_family != AF_INET) continue;
         if (strcmp(ifa->ifa_name, "wlan0") != 0) continue;
-
         struct sockaddr_in *addr = (struct sockaddr_in *)ifa->ifa_addr;
         inet_ntop(AF_INET, &addr->sin_addr, out, (socklen_t)out_size);
         break;
     }
-
     freeifaddrs(ifaddr);
     return out[0] ? 0 : -1;
 }
 
 /* -----------------------------------------------------------------------
- * Embedded setup web server
+ * Embedded setup web server (unchanged)
  * ----------------------------------------------------------------------- */
 
 static const char *SETUP_HTML =
@@ -434,7 +478,6 @@ static const char *SETUP_HTML =
     "color:white;border:none;border-radius:8px;cursor:pointer;margin-top:12px;}"
     "button:hover{background:#3a7bc8;}"
     "p{color:#8c8c96;font-size:14px;}"
-    ".ok{color:#5cb85c;font-size:1.2em;text-align:center;padding:40px 0;}"
     "</style></head><body>"
     "<h1>Nimbus Setup</h1>"
     "<p>Enter your WeatherAPI.com API key below.</p>"
@@ -495,46 +538,34 @@ static void extract_form_value(const char *body, const char *field,
 
 static void *setup_server_thread(void *arg) {
     setup_server_t *srv = (setup_server_t *)arg;
-
     while (srv->running) {
         struct sockaddr_in client_addr;
         socklen_t client_len = sizeof(client_addr);
-
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(srv->server_fd, &fds);
         struct timeval tv = {.tv_sec = 0,.tv_usec = 500000 };
-
         int sel = select(srv->server_fd + 1, &fds, NULL, NULL, &tv);
         if (sel <= 0) continue;
-
         int client_fd = accept(srv->server_fd, (struct sockaddr *)&client_addr, &client_len);
         if (client_fd < 0) continue;
-
         char req_buf[4096] = {0};
         ssize_t n = read(client_fd, req_buf, sizeof(req_buf) - 1);
         if (n <= 0) { close(client_fd); continue; }
         req_buf[n] = '\0';
-
         int is_post = (strncmp(req_buf, "POST", 4) == 0);
         int is_key_post = is_post && strstr(req_buf, "POST /key") != NULL;
-
         char response[8192];
-
         if (is_key_post) {
             const char *body = strstr(req_buf, "\r\n\r\n");
             if (body) body += 4; else body = "";
-
             char key_val[128] = {0};
             extract_form_value(body, "key", key_val, sizeof(key_val));
             trim_inplace(key_val);
-
             if (key_val[0]) {
                 snprintf(srv->received_key, sizeof(srv->received_key), "%s", key_val);
                 snprintf(response, sizeof(response),
-                         "HTTP/1.1 200 OK\r\n"
-                         "Content-Type: text/html\r\n"
-                         "Connection: close\r\n\r\n%s",
+                         "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n%s",
                          SETUP_OK_HTML);
                 write(client_fd, response, strlen(response));
                 close(client_fd);
@@ -542,49 +573,32 @@ static void *setup_server_thread(void *arg) {
                 break;
             }
         }
-
         snprintf(response, sizeof(response),
-                 "HTTP/1.1 200 OK\r\n"
-                 "Content-Type: text/html\r\n"
-                 "Connection: close\r\n\r\n%s",
+                 "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n%s",
                  SETUP_HTML);
         write(client_fd, response, strlen(response));
         close(client_fd);
     }
-
     return NULL;
 }
 
 static int setup_server_start(setup_server_t *srv) {
     memset(srv, 0, sizeof(*srv));
-
     srv->server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (srv->server_fd < 0) {
-        ap_log("setup: socket() failed: %s", strerror(errno));
-        return -1;
-    }
-
+    if (srv->server_fd < 0) return -1;
     int opt = 1;
     setsockopt(srv->server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = htons(SETUP_SERVER_PORT);
-
     if (bind(srv->server_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        ap_log("setup: bind() failed: %s", strerror(errno));
-        close(srv->server_fd);
-        return -1;
+        close(srv->server_fd); return -1;
     }
-
     if (listen(srv->server_fd, 5) < 0) {
-        ap_log("setup: listen() failed: %s", strerror(errno));
-        close(srv->server_fd);
-        return -1;
+        close(srv->server_fd); return -1;
     }
-
     srv->running = 1;
     pthread_create(&srv->thread, NULL, setup_server_thread, srv);
     ap_log("setup: server started on port %d", SETUP_SERVER_PORT);
@@ -595,7 +609,6 @@ static void setup_server_stop(setup_server_t *srv) {
     srv->running = 0;
     pthread_join(srv->thread, NULL);
     close(srv->server_fd);
-    ap_log("setup: server stopped");
 }
 
 /* -----------------------------------------------------------------------
@@ -605,107 +618,74 @@ static void setup_server_stop(setup_server_t *srv) {
 static void draw_qr_code(const char *text, int cx, int cy, int max_size) {
     uint8_t qr_buf[qrcodegen_BUFFER_LEN_MAX];
     uint8_t temp_buf[qrcodegen_BUFFER_LEN_MAX];
-
     if (!qrcodegen_encodeText(text, temp_buf, qr_buf,
                                qrcodegen_Ecc_LOW, qrcodegen_VERSION_MIN,
-                               qrcodegen_VERSION_MAX, qrcodegen_Mask_AUTO, true)) {
-        ap_log("qr: encode failed for '%s'", text);
-        return;
-    }
-
+                               qrcodegen_VERSION_MAX, qrcodegen_Mask_AUTO, true)) return;
     int qr_size = qrcodegen_getSize(qr_buf);
     int module_px = max_size / (qr_size + 4);
     if (module_px < 1) module_px = 1;
     int total_px = module_px * (qr_size + 4);
-
     int ox = cx - total_px / 2;
     int oy = cy - total_px / 2;
-
     ap_color white = {255, 255, 255, 255};
     ap_color black = {0, 0, 0, 255};
     ap_draw_rect(ox, oy, total_px, total_px, white);
-
     int quiet = module_px * 2;
-    for (int y = 0; y < qr_size; y++) {
-        for (int x = 0; x < qr_size; x++) {
-            if (qrcodegen_getModule(qr_buf, x, y)) {
-                ap_draw_rect(ox + quiet + x * module_px,
-                             oy + quiet + y * module_px,
+    for (int y = 0; y < qr_size; y++)
+        for (int x = 0; x < qr_size; x++)
+            if (qrcodegen_getModule(qr_buf, x, y))
+                ap_draw_rect(ox + quiet + x * module_px, oy + quiet + y * module_px,
                              module_px, module_px, black);
-            }
-        }
-    }
 }
 
 /* -----------------------------------------------------------------------
- * API key setup screen (QR + web server)
+ * API key setup screen
  * ----------------------------------------------------------------------- */
 
 static int show_api_key_setup(void) {
     int wifi_strength = ap__get_wifi_strength();
-    ap_log("setup: wifi strength = %d", wifi_strength);
-
     char ip[64] = {0};
     if (wifi_strength == 0 || get_local_ip(ip, sizeof(ip)) != 0) {
-        pakkit_message("WiFi not connected.\n\n"
-                       "Connect to WiFi and restart Nimbus,\n"
-                       "or manually create:\n\n"
-                       ".userdata/tg5040/nimbus/\n"
-                       "  config/api_key.txt", "Quit");
+        pakkit_message("WiFi not connected.\n\nConnect to WiFi and restart Nimbus,\n"
+                       "or manually create:\n\n.userdata/tg5040/nimbus/\n  config/api_key.txt", "Quit");
         return -1;
     }
-
     char url[128];
     snprintf(url, sizeof(url), "http://%s:%d", ip, SETUP_SERVER_PORT);
-    ap_log("setup: URL = %s", url);
-
     setup_server_t srv;
     if (setup_server_start(&srv) != 0) {
-        pakkit_message("Could not start setup server.\n\n"
-                       "Manually create:\n"
-                       ".userdata/tg5040/nimbus/\n"
-                       "  config/api_key.txt", "Quit");
+        pakkit_message("Could not start setup server.", "Quit");
         return -1;
     }
-
     int sw = ap_get_screen_width();
     int sh = ap_get_screen_height();
     int pad = AP_DS(5);
-
     TTF_Font *font_large = ap_get_font(AP_FONT_LARGE);
     TTF_Font *font_med   = ap_get_font(AP_FONT_MEDIUM);
     TTF_Font *font_small = ap_get_font(AP_FONT_SMALL);
     TTF_Font *font_tiny  = ap_get_font(AP_FONT_TINY);
-
     ap_theme *theme = ap_get_theme();
     ap_color text_color = theme->text;
     ap_color hint_color = theme->hint;
-
     int result = -1;
-
     while (srv.running) {
         ap_input_event ev;
         while (ap_poll_input(&ev)) {
             if (ev.pressed && !ev.repeated && ev.button == AP_BTN_B) {
-                srv.running = 0;
-                result = -1;
+                srv.running = 0; result = -1;
             }
         }
-
         ap_clear_screen();
         ap_draw_background();
-
         int y = pad * 3;
         const char *title = "Nimbus Setup";
         int title_w = ap_measure_text(font_large, title);
         ap_draw_text(font_large, title, (sw - title_w) / 2, y, text_color);
         y += TTF_FontHeight(font_large) + pad * 2;
-
         const char *inst = "Scan QR code or visit URL to enter API key";
         int inst_w = ap_measure_text(font_small, inst);
         ap_draw_text(font_small, inst, (sw - inst_w) / 2, y, hint_color);
         y += TTF_FontHeight(font_small) + pad * 3;
-
         int hint_font_h = TTF_FontHeight(font_tiny);
         int footer_h = hint_font_h + pad * 2;
         int avail_h = sh - y - footer_h - TTF_FontHeight(font_med) - TTF_FontHeight(font_small) - pad * 6;
@@ -714,29 +694,22 @@ static int show_api_key_setup(void) {
         int qr_cy = y + qr_max / 2;
         draw_qr_code(url, sw / 2, qr_cy, qr_max);
         y = qr_cy + qr_max / 2 + pad * 2;
-
         int url_w = ap_measure_text(font_med, url);
         ap_draw_text(font_med, url, (sw - url_w) / 2, y, text_color);
         y += TTF_FontHeight(font_med) + pad;
-
         const char *wait = "Waiting for API key...";
         int wait_w = ap_measure_text(font_small, wait);
         ap_draw_text(font_small, wait, (sw - wait_w) / 2, y, hint_color);
-
         int hint_y = sh - TTF_FontHeight(font_tiny) - pad;
         ap_draw_text(font_tiny, "B: Cancel", pad * 2, hint_y, hint_color);
-
         ap_present();
     }
-
     if (srv.received_key[0]) {
         snprintf(g_api_key, sizeof(g_api_key), "%s", srv.received_key);
         trim_inplace(g_api_key);
         save_api_key(g_api_key);
-        ap_log("setup: API key received and saved");
         result = 0;
     }
-
     setup_server_stop(&srv);
     return result;
 }
@@ -786,11 +759,9 @@ static int fetch_url(const char *url, fetch_buf_t *buf) {
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
     curl_easy_cleanup(curl);
     if (res != CURLE_OK) {
-        ap_log("fetch: curl error: %s", curl_easy_strerror(res));
         free(buf->data); buf->data = NULL; buf->size = 0;
         return -1;
     }
-    ap_log("fetch: HTTP %ld, %zu bytes", http_code, buf->size);
     return 0;
 }
 
@@ -800,35 +771,29 @@ static int fetch_url(const char *url, fetch_buf_t *buf) {
 
 static SDL_Texture *fetch_and_load_icon(const char *icon_url) {
     if (!icon_url || !icon_url[0] || g_cache_dir[0] == '\0') return NULL;
-
     char full_url[MAX_URL];
     if (strncmp(icon_url, "//", 2) == 0)
         snprintf(full_url, sizeof(full_url), "https:%s", icon_url);
     else
         snprintf(full_url, sizeof(full_url), "%s", icon_url);
-
     const char *slash = strrchr(icon_url, '/');
     const char *fname = slash ? slash + 1 : "icon.png";
     const char *day_night = strstr(icon_url, "/day/") ? "day" : "night";
     char cache_path[MAX_PATH_LEN];
     snprintf(cache_path, sizeof(cache_path), "%s/%s_%s", g_cache_dir, day_night, fname);
-
     if (access(cache_path, R_OK) == 0)
         return ap_load_image(cache_path);
-
     fetch_buf_t buf;
     int rc = fetch_url(full_url, &buf);
     if (rc != 0 || !buf.data) return NULL;
-
     FILE *f = fopen(cache_path, "wb");
     if (f) { fwrite(buf.data, 1, buf.size, f); fclose(f); }
     free(buf.data);
-
     return ap_load_image(cache_path);
 }
 
 /* -----------------------------------------------------------------------
- * WeatherAPI.com: fetch + parse forecast
+ * WeatherAPI.com: fetch + parse
  * ----------------------------------------------------------------------- */
 
 static void free_weather_textures(weather_data_t *w) {
@@ -839,6 +804,12 @@ static void free_weather_textures(weather_data_t *w) {
             w->forecast[i].icon_texture = NULL;
         }
     }
+    for (int i = 0; i < w->hour_count; i++) {
+        if (w->hours[i].icon_texture) {
+            SDL_DestroyTexture(w->hours[i].icon_texture);
+            w->hours[i].icon_texture = NULL;
+        }
+    }
 }
 
 static int parse_weather_data(const char *json_str, weather_data_t *weather) {
@@ -846,15 +817,10 @@ static int parse_weather_data(const char *json_str, weather_data_t *weather) {
     memset(weather, 0, sizeof(*weather));
 
     cJSON *root = cJSON_Parse(json_str);
-    if (!root) { ap_log("weather: JSON parse failed"); return -1; }
+    if (!root) return -1;
 
     cJSON *error = cJSON_GetObjectItem(root, "error");
-    if (error) {
-        cJSON *msg = cJSON_GetObjectItem(error, "message");
-        ap_log("weather: API error: %s", msg ? msg->valuestring : "unknown");
-        cJSON_Delete(root);
-        return -1;
-    }
+    if (error) { cJSON_Delete(root); return -1; }
 
     cJSON *loc = cJSON_GetObjectItem(root, "location");
     if (loc) {
@@ -865,6 +831,8 @@ static int parse_weather_data(const char *json_str, weather_data_t *weather) {
             strncpy(weather->region, v->valuestring, MAX_LOCATION - 1);
         if ((v = cJSON_GetObjectItem(loc, "country")) && v->valuestring)
             strncpy(weather->country, v->valuestring, MAX_LOCATION - 1);
+        if ((v = cJSON_GetObjectItem(loc, "lat"))) weather->loc_lat = v->valuedouble;
+        if ((v = cJSON_GetObjectItem(loc, "lon"))) weather->loc_lon = v->valuedouble;
     }
 
     cJSON *cur = cJSON_GetObjectItem(root, "current");
@@ -886,7 +854,6 @@ static int parse_weather_data(const char *json_str, weather_data_t *weather) {
         if ((v = cJSON_GetObjectItem(cur, "is_day")))        weather->is_day = v->valueint;
         if ((v = cJSON_GetObjectItem(cur, "last_updated")) && v->valuestring)
             strncpy(weather->last_updated, v->valuestring, sizeof(weather->last_updated) - 1);
-
         cJSON *cond = cJSON_GetObjectItem(cur, "condition");
         if (cond) {
             if ((v = cJSON_GetObjectItem(cond, "text")) && v->valuestring)
@@ -936,7 +903,6 @@ static int parse_weather_data(const char *json_str, weather_data_t *weather) {
                     if ((v = cJSON_GetObjectItem(d, "totalprecip_mm"))) day->total_precip_mm = v->valuedouble;
                     if ((v = cJSON_GetObjectItem(d, "avghumidity")))    day->avg_humidity = v->valueint;
                     if ((v = cJSON_GetObjectItem(d, "uv")))             day->uv = v->valuedouble;
-
                     cJSON *cond = cJSON_GetObjectItem(d, "condition");
                     if (cond) {
                         if ((v = cJSON_GetObjectItem(cond, "text")) && v->valuestring)
@@ -960,6 +926,61 @@ static int parse_weather_data(const char *json_str, weather_data_t *weather) {
                         strncpy(day->moonset, v->valuestring, sizeof(day->moonset) - 1);
                     if ((v = cJSON_GetObjectItem(astro, "moon_phase")) && v->valuestring)
                         strncpy(day->moon_phase, v->valuestring, sizeof(day->moon_phase) - 1);
+                    if ((v = cJSON_GetObjectItem(astro, "moon_illumination"))) {
+                        if (cJSON_IsString(v)) day->moon_illumination = atoi(v->valuestring);
+                        else day->moon_illumination = v->valueint;
+                    }
+                }
+
+                /* Parse hourly data */
+                cJSON *hour_arr = cJSON_GetObjectItem(fd, "hour");
+                if (hour_arr && cJSON_IsArray(hour_arr)) {
+                    int h_size = cJSON_GetArraySize(hour_arr);
+                    for (int h = 0; h < h_size && weather->hour_count < MAX_HOURS; h++) {
+                        cJSON *hr = cJSON_GetArrayItem(hour_arr, h);
+                        if (!hr) continue;
+                        hourly_t *hour = &weather->hours[weather->hour_count];
+                        memset(hour, 0, sizeof(*hour));
+
+                        if ((v = cJSON_GetObjectItem(hr, "time")) && v->valuestring) {
+                            strncpy(hour->time, v->valuestring, sizeof(hour->time) - 1);
+                            format_hour_label(hour->time, hour->hour_label, sizeof(hour->hour_label));
+                        }
+                        if ((v = cJSON_GetObjectItem(hr, "temp_f")))       hour->temp_f = v->valuedouble;
+                        if ((v = cJSON_GetObjectItem(hr, "temp_c")))       hour->temp_c = v->valuedouble;
+                        if ((v = cJSON_GetObjectItem(hr, "feelslike_f")))   hour->feels_like_f = v->valuedouble;
+                        if ((v = cJSON_GetObjectItem(hr, "feelslike_c")))   hour->feels_like_c = v->valuedouble;
+                        if ((v = cJSON_GetObjectItem(hr, "humidity")))      hour->humidity = v->valueint;
+                        if ((v = cJSON_GetObjectItem(hr, "wind_mph")))      hour->wind_mph = v->valuedouble;
+                        if ((v = cJSON_GetObjectItem(hr, "wind_kph")))      hour->wind_kph = v->valuedouble;
+                        if ((v = cJSON_GetObjectItem(hr, "wind_dir")) && v->valuestring)
+                            strncpy(hour->wind_dir, v->valuestring, sizeof(hour->wind_dir) - 1);
+                        if ((v = cJSON_GetObjectItem(hr, "chance_of_rain"))) {
+                            if (cJSON_IsString(v)) hour->chance_rain = atoi(v->valuestring);
+                            else hour->chance_rain = v->valueint;
+                        }
+                        if ((v = cJSON_GetObjectItem(hr, "chance_of_snow"))) {
+                            if (cJSON_IsString(v)) hour->chance_snow = atoi(v->valuestring);
+                            else hour->chance_snow = v->valueint;
+                        }
+                        if ((v = cJSON_GetObjectItem(hr, "precip_in")))    hour->precip_in = v->valuedouble;
+                        if ((v = cJSON_GetObjectItem(hr, "precip_mm")))    hour->precip_mm = v->valuedouble;
+                        if ((v = cJSON_GetObjectItem(hr, "cloud")))        hour->cloud = v->valueint;
+                        if ((v = cJSON_GetObjectItem(hr, "uv")))           hour->uv = v->valuedouble;
+                        if ((v = cJSON_GetObjectItem(hr, "is_day")))       hour->is_day = v->valueint;
+
+                        cJSON *hcond = cJSON_GetObjectItem(hr, "condition");
+                        if (hcond) {
+                            if ((v = cJSON_GetObjectItem(hcond, "text")) && v->valuestring)
+                                strncpy(hour->condition_text, v->valuestring, MAX_LABEL - 1);
+                            if ((v = cJSON_GetObjectItem(hcond, "code")))
+                                hour->condition_code = v->valueint;
+                            if ((v = cJSON_GetObjectItem(hcond, "icon")) && v->valuestring)
+                                strncpy(hour->icon_url, v->valuestring, MAX_URL - 1);
+                        }
+
+                        weather->hour_count++;
+                    }
                 }
 
                 weather->forecast_count++;
@@ -969,9 +990,9 @@ static int parse_weather_data(const char *json_str, weather_data_t *weather) {
 
     weather->valid = 1;
     cJSON_Delete(root);
-    ap_log("weather: %s, %.0f\xc2\xb0""F, %s, %d day forecast",
+    ap_log("weather: %s, %.0f\xc2\xb0""F, %s, %d day forecast, %d hours",
            weather->location_name, weather->temp_f, weather->condition_text,
-           weather->forecast_count);
+           weather->forecast_count, weather->hour_count);
     return 0;
 }
 
@@ -995,28 +1016,23 @@ static int fetch_weather_for_location(int loc_idx) {
                  "https://api.weatherapi.com/v1/forecast.json?key=%s&q=%s&days=3&aqi=no",
                  g_api_key, loc->name);
 
-    /* Show loading screen manually so we control what's on screen */
-    {
-        int sw = ap_get_screen_width();
-        int sh = ap_get_screen_height();
-        TTF_Font *font_small = ap_get_font(AP_FONT_SMALL);
-        ap_color text_color = ap_get_theme()->text;
-        char msg[256];
-        snprintf(msg, sizeof(msg), "Fetching weather for\n%s...", loc->name);
-        int max_w = sw - AP_DS(5) * 8;
-        int msg_h = ap_measure_wrapped_text_height(font_small, msg, max_w);
-        ap_clear_screen();
-        ap_draw_background();
-        ap_draw_text_wrapped(font_small, msg, AP_DS(5) * 4, (sh - msg_h) / 2,
-                             max_w, text_color, AP_ALIGN_CENTER);
-        ap_present();
-    }
+    char msg[256];
+    snprintf(msg, sizeof(msg), "Fetching weather for\n%s...", loc->name);
 
-    /* Fetch synchronously on this thread */
+    int sw = ap_get_screen_width();
+    int sh = ap_get_screen_height();
+    TTF_Font *font_small = ap_get_font(AP_FONT_SMALL);
+    ap_color text_color = ap_get_theme()->text;
+    int max_w = sw - AP_DS(5) * 8;
+    int msg_h = ap_measure_wrapped_text_height(font_small, msg, max_w);
+    ap_clear_screen();
+    ap_draw_background();
+    ap_draw_text_wrapped(font_small, msg, AP_DS(5) * 4, (sh - msg_h) / 2,
+                         max_w, text_color, AP_ALIGN_CENTER);
+    ap_present();
+
     fetch_buf_t buf;
-    buf.data = NULL; buf.size = 0; buf.capacity = 0;
     int rc = fetch_url(url, &buf);
-
     if (rc != 0) return -1;
 
     rc = parse_weather_data(buf.data, weather);
@@ -1032,22 +1048,25 @@ static int fetch_weather_for_location(int loc_idx) {
         if (weather->forecast[i].icon_url[0])
             weather->forecast[i].icon_texture = fetch_and_load_icon(weather->forecast[i].icon_url);
     }
+    for (int i = 0; i < weather->hour_count; i++) {
+        if (weather->hours[i].icon_url[0])
+            weather->hours[i].icon_texture = fetch_and_load_icon(weather->hours[i].icon_url);
+    }
     if (!g_sunrise_icon)
         g_sunrise_icon = fetch_and_load_icon("//cdn.weatherapi.com/weather/64x64/day/113.png");
     if (!g_sunset_icon)
         g_sunset_icon = fetch_and_load_icon("//cdn.weatherapi.com/weather/64x64/night/113.png");
 
-    /* If auto:ip, update the location name */
     if (strcmp(loc->name, "auto:ip") == 0 && weather->location_name[0]) {
         if (weather->region[0])
             snprintf(loc->name, MAX_LOCATION, "%s, %s",
                      weather->location_name, weather->region);
         else
             snprintf(loc->name, MAX_LOCATION, "%s", weather->location_name);
-        loc->lat_lon[0] = '\0';
+        snprintf(loc->lat_lon, sizeof(loc->lat_lon), "%.4f,%.4f",
+                 weather->loc_lat, weather->loc_lon);
         loc->id = 0;
         save_locations();
-        ap_log("weather: auto-detected location: %s", loc->name);
     }
 
     return 0;
@@ -1065,20 +1084,18 @@ static void show_about(void) {
         {.key = "Data",.value = "WeatherAPI.com" },
         {.key = "License",.value = "MIT" },
     };
-
     const char *credits[] = {
         "Nimbus by Eric Reinsmidt",
         "Built with PakKit and Apostrophe",
         "For NextUI by LoveRetro",
     };
-
-    pakkit_detail_opts opts = {.title        = "Nimbus",.subtitle     = "Weather app for NextUI",.info         = info,.info_count   = 5,.credits      = credits,.credit_count = 3,
+    pakkit_detail_opts opts = {.title = "Nimbus",.subtitle = "Weather app for NextUI",.info = info,.info_count = 5,.credits = credits,.credit_count = 3,
     };
     pakkit_detail_screen(&opts);
 }
 
 /* -----------------------------------------------------------------------
- * Location search
+ * Location search + management
  * ----------------------------------------------------------------------- */
 
 #define MAX_SEARCH_RESULTS 10
@@ -1094,7 +1111,6 @@ typedef struct {
 
 static int search_locations(const char *query, search_result_t *results, int max_results) {
     if (g_api_key[0] == '\0' || !query || !query[0]) return 0;
-
     char url[MAX_URL];
     char encoded[256] = {0};
     const char *src = query;
@@ -1105,20 +1121,16 @@ static int search_locations(const char *query, search_result_t *results, int max
         src++;
     }
     *dst = '\0';
-
     snprintf(url, sizeof(url),
              "https://api.weatherapi.com/v1/search.json?key=%s&q=%s",
              g_api_key, encoded);
-
     pakkit_loading("Searching...");
     fetch_buf_t buf;
     int rc = fetch_url(url, &buf);
     if (rc != 0) return 0;
-
     cJSON *root = cJSON_Parse(buf.data);
     free(buf.data);
     if (!root || !cJSON_IsArray(root)) { cJSON_Delete(root); return 0; }
-
     int count = 0, arr_size = cJSON_GetArraySize(root);
     for (int i = 0; i < arr_size && count < max_results; i++) {
         cJSON *item = cJSON_GetArrayItem(root, i);
@@ -1148,20 +1160,16 @@ static int search_and_add_location(void) {
         pakkit_message(msg, "OK");
         return -1;
     }
-
     pakkit_keyboard_opts kb_opts = {.prompt = "City, zip, or postal code" };
     pakkit_keyboard_result kb_result;
     int rc = pakkit_keyboard("", &kb_opts, &kb_result);
     if (rc != AP_OK || kb_result.text[0] == '\0') return -1;
-
     search_result_t results[MAX_SEARCH_RESULTS];
     int count = search_locations(kb_result.text, results, MAX_SEARCH_RESULTS);
-
     if (count == 0) {
         pakkit_message("No locations found.\nTry a different search.", "OK");
         return -1;
     }
-
     static char result_labels[MAX_SEARCH_RESULTS][512];
     pakkit_list_item items[MAX_SEARCH_RESULTS];
     for (int i = 0; i < count; i++) {
@@ -1173,22 +1181,18 @@ static int search_and_add_location(void) {
                      results[i].name, results[i].country);
         items[i].label = result_labels[i];
     }
-
     pakkit_hint hints[] = {
         {.button = "B",.label = "Cancel" },
         {.button = "A",.label = "Select" },
     };
     pakkit_list_opts opts = {.title = "Select Location",.hints = hints,.hint_count = 2,.secondary_button = AP_BTN_NONE,.tertiary_button = AP_BTN_NONE,
     };
-
     pakkit_list_result result;
     rc = pakkit_list(&opts, items, count, &result);
     if (rc != AP_OK || result.selected_index < 0) return -1;
-
     search_result_t *sel = &results[result.selected_index];
     location_t *loc = &g_locations[g_location_count];
     memset(loc, 0, sizeof(*loc));
-
     if (sel->region[0])
         snprintf(loc->name, MAX_LOCATION, "%s, %s", sel->name, sel->region);
     else
@@ -1196,71 +1200,49 @@ static int search_and_add_location(void) {
     snprintf(loc->lat_lon, sizeof(loc->lat_lon), "%.2f,%.2f", sel->lat, sel->lon);
     loc->id = sel->id;
     loc->is_home = (g_location_count == 0) ? 1 : 0;
-
-    /* Clear weather cache for new slot */
     memset(&g_weather_cache[g_location_count], 0, sizeof(weather_data_t));
-
     g_location_count++;
     save_locations();
-    ap_log("locations: added %s (total: %d)", loc->name, g_location_count);
     return g_location_count - 1;
 }
 
-/* -----------------------------------------------------------------------
- * Screens: Location management
- * ----------------------------------------------------------------------- */
-
 static void show_location_options(int loc_idx) {
     if (loc_idx < 0 || loc_idx >= g_location_count) return;
-
     char title[256];
     snprintf(title, sizeof(title), "%s", g_locations[loc_idx].name);
-
     int item_count = 2;
     pakkit_menu_item items[2];
     items[0] = (pakkit_menu_item){.label = "Set as Home" };
     items[1] = (pakkit_menu_item){.label = "Delete" };
-
-    /* Can't delete if it's the only location */
-    if (g_location_count <= 1)
-        item_count = 1;
-
+    if (g_location_count <= 1) item_count = 1;
     pakkit_menu_result result;
     int rc = pakkit_menu(title, items, item_count, &result);
     if (rc != AP_OK) return;
-
     switch (result.selected_index) {
-        case 0: /* Set as Home */
-            for (int i = 0; i < g_location_count; i++)
-                g_locations[i].is_home = 0;
+        case 0:
+            for (int i = 0; i < g_location_count; i++) g_locations[i].is_home = 0;
             g_locations[loc_idx].is_home = 1;
             save_locations();
             break;
-        case 1: /* Delete */
-            {
-                char msg[256];
-                snprintf(msg, sizeof(msg), "Delete \"%s\"?", g_locations[loc_idx].name);
-                if (pakkit_confirm(msg, "Delete", "Cancel")) {
-                    int was_home = g_locations[loc_idx].is_home;
-                    free_weather_textures(&g_weather_cache[loc_idx]);
-
-                    for (int i = loc_idx; i < g_location_count - 1; i++) {
-                        g_locations[i] = g_locations[i + 1];
-                        g_weather_cache[i] = g_weather_cache[i + 1];
-                    }
-                    g_location_count--;
-                    memset(&g_weather_cache[g_location_count], 0, sizeof(weather_data_t));
-
-                    if (was_home && g_location_count > 0)
-                        g_locations[0].is_home = 1;
-
-                    if (g_current_location >= g_location_count)
-                        g_current_location = g_location_count > 0 ? g_location_count - 1 : 0;
-
-                    save_locations();
+        case 1: {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "Delete \"%s\"?", g_locations[loc_idx].name);
+            if (pakkit_confirm(msg, "Delete", "Cancel")) {
+                int was_home = g_locations[loc_idx].is_home;
+                free_weather_textures(&g_weather_cache[loc_idx]);
+                for (int i = loc_idx; i < g_location_count - 1; i++) {
+                    g_locations[i] = g_locations[i + 1];
+                    g_weather_cache[i] = g_weather_cache[i + 1];
                 }
+                g_location_count--;
+                memset(&g_weather_cache[g_location_count], 0, sizeof(weather_data_t));
+                if (was_home && g_location_count > 0) g_locations[0].is_home = 1;
+                if (g_current_location >= g_location_count)
+                    g_current_location = g_location_count > 0 ? g_location_count - 1 : 0;
+                save_locations();
             }
             break;
+        }
     }
 }
 
@@ -1275,29 +1257,18 @@ static void show_locations(void) {
                 snprintf(loc_labels[i], sizeof(loc_labels[i]), "%s", g_locations[i].name);
             items[i].label = loc_labels[i];
         }
-
         pakkit_hint hints[] = {
             {.button = "B",.label = "Back" },
             {.button = "X",.label = "Add" },
             {.button = "A",.label = "Options" },
         };
-
         pakkit_list_opts opts = {.title = "Locations",.hints = hints,.hint_count = 3,.secondary_button = AP_BTN_X,.tertiary_button = AP_BTN_NONE,
         };
-
         pakkit_list_result result;
         pakkit_list(&opts, items, g_location_count, &result);
-
         if (result.action == PAKKIT_ACTION_BACK) return;
-
-        if (result.action == PAKKIT_ACTION_SECONDARY) {
-            search_and_add_location();
-            continue;
-        }
-
-        if (result.selected_index >= 0) {
-            show_location_options(result.selected_index);
-        }
+        if (result.action == PAKKIT_ACTION_SECONDARY) { search_and_add_location(); continue; }
+        if (result.selected_index >= 0) show_location_options(result.selected_index);
     }
 }
 
@@ -1310,43 +1281,404 @@ static void show_settings(void) {
         char units_label[32];
         snprintf(units_label, sizeof(units_label), "Units: %s",
                  g_settings.use_fahrenheit ? "\xc2\xb0""F" : "\xc2\xb0""C");
-
         pakkit_menu_item items[] = {
             {.label = units_label },
             {.label = "Locations" },
             {.label = "Change API Key" },
             {.label = "About" },
         };
-
         pakkit_menu_result result;
         int rc = pakkit_menu("Settings", items, 4, &result);
         if (rc != AP_OK) return;
-
         switch (result.selected_index) {
-            case 0:
-                g_settings.use_fahrenheit = !g_settings.use_fahrenheit;
-                settings_save();
-                break;
-            case 1:
-                show_locations();
-                break;
-            case 2:
-                show_api_key_setup();
-                break;
-            case 3:
-                show_about();
-                break;
+            case 0: g_settings.use_fahrenheit = !g_settings.use_fahrenheit; settings_save(); break;
+            case 1: show_locations(); break;
+            case 2: show_api_key_setup(); break;
+            case 3: show_about(); break;
         }
     }
 }
 
 /* -----------------------------------------------------------------------
- * Screens: Custom weather display
+ * Weather screen: tab drawing helpers
+ * ----------------------------------------------------------------------- */
+
+static void draw_tab_current(weather_data_t *weather, int content_y, int content_h,
+                              int scroll_y, int *total_h) {
+    int sw = ap_get_screen_width();
+    int pad = AP_DS(5);
+
+    TTF_Font *font_xl    = ap_get_font(AP_FONT_EXTRA_LARGE);
+    TTF_Font *font_med   = ap_get_font(AP_FONT_MEDIUM);
+    TTF_Font *font_small = ap_get_font(AP_FONT_SMALL);
+    // TTF_Font *font_tiny  = ap_get_font(AP_FONT_TINY);
+
+    ap_theme *theme = ap_get_theme();
+    ap_color text_color = theme->text;
+    ap_color hint_color = theme->hint;
+
+    int y = content_y - scroll_y;
+
+    /* Section title */
+    // ap_draw_text(font_med, "Current", pad * 3, y, hint_color);
+    // y += TTF_FontHeight(font_med);
+
+    /* Icon + Temperature */
+    int icon_size = AP_DS(64);
+    int icon_x = pad * 3;
+    if (weather->icon_texture)
+        ap_draw_image(weather->icon_texture, icon_x, y, icon_size, icon_size);
+
+    char temp_str[32];
+    if (g_settings.use_fahrenheit)
+        snprintf(temp_str, sizeof(temp_str), "%.0f\xc2\xb0""F", weather->temp_f);
+    else
+        snprintf(temp_str, sizeof(temp_str), "%.0f\xc2\xb0""C", weather->temp_c);
+
+    int temp_x = icon_x + icon_size + pad * 2;
+    int temp_y = y + (icon_size / 2) - TTF_FontHeight(font_xl) / 2 - pad;
+    ap_draw_text(font_xl, temp_str, temp_x, temp_y, text_color);
+    int cond_y = temp_y + TTF_FontHeight(font_xl) + 2;
+    ap_draw_text(font_med, weather->condition_text, temp_x, cond_y, hint_color);
+    y += icon_size + pad * 2;
+
+    /* Divider */
+    ap_draw_rect(pad * 3, y, sw - pad * 6, 1, hint_color);
+    y += pad * 2;
+
+    /* Details */
+    int col1_x = pad * 3;
+    int col2_x = sw / 2 + pad;
+    int row_h = TTF_FontHeight(font_small) + pad;
+
+    char feels_str[32], humidity_str[32], wind_str[64];
+    char precip_str[32], cloud_str[32], uv_str[32];
+
+    if (g_settings.use_fahrenheit) {
+        snprintf(feels_str, sizeof(feels_str), "Feels like %.0f\xc2\xb0""F", weather->feels_like_f);
+        snprintf(wind_str, sizeof(wind_str), "Wind: %.0f mph %s", weather->wind_mph, weather->wind_dir);
+        snprintf(precip_str, sizeof(precip_str), "Precip: %.2f in", weather->precip_in);
+    } else {
+        snprintf(feels_str, sizeof(feels_str), "Feels like %.0f\xc2\xb0""C", weather->feels_like_c);
+        snprintf(wind_str, sizeof(wind_str), "Wind: %.0f km/h %s", weather->wind_kph, weather->wind_dir);
+        snprintf(precip_str, sizeof(precip_str), "Precip: %.1f mm", weather->precip_mm);
+    }
+    snprintf(humidity_str, sizeof(humidity_str), "Humidity: %d%%", weather->humidity);
+    snprintf(cloud_str, sizeof(cloud_str), "Cloud: %d%%", weather->cloud);
+    snprintf(uv_str, sizeof(uv_str), "UV: %.0f", weather->uv);
+
+    ap_draw_text(font_small, feels_str, col1_x, y, text_color);
+    ap_draw_text(font_small, humidity_str, col2_x, y, text_color);
+    y += row_h;
+    ap_draw_text(font_small, wind_str, col1_x, y, text_color);
+    ap_draw_text(font_small, cloud_str, col2_x, y, text_color);
+    y += row_h;
+    ap_draw_text(font_small, precip_str, col1_x, y, text_color);
+    ap_draw_text(font_small, uv_str, col2_x, y, text_color);
+    y += row_h;
+
+    /* Sunrise / Sunset */
+    if (weather->forecast_count > 0) {
+        forecast_day_t *today = &weather->forecast[0];
+        if (today->sunrise[0] && today->sunset[0]) {
+            int sun_icon_size = TTF_FontHeight(font_small);
+            int text_offset = sun_icon_size + pad;
+            if (g_sunrise_icon)
+                ap_draw_image(g_sunrise_icon, col1_x, y, sun_icon_size, sun_icon_size);
+            ap_draw_text(font_small, today->sunrise, col1_x + text_offset, y, text_color);
+            if (g_sunset_icon)
+                ap_draw_image(g_sunset_icon, col2_x, y, sun_icon_size, sun_icon_size);
+            ap_draw_text(font_small, today->sunset, col2_x + text_offset, y, text_color);
+            y += row_h;
+        }
+    }
+
+    y += pad * 2;
+
+    /* Updated */
+    // char updated_str[128];
+    // snprintf(updated_str, sizeof(updated_str), "Updated: %s", weather->last_updated);
+    // ap_draw_text(font_tiny, updated_str, pad * 3, y, hint_color);
+    // y += TTF_FontHeight(font_tiny) + pad * 2;
+
+    *total_h = y + scroll_y - content_y;
+}
+
+static void draw_tab_forecast(weather_data_t *weather, int content_y, int content_h,
+                               int scroll_y, int *total_h) {
+    int sw = ap_get_screen_width();
+    int pad = AP_DS(5);
+
+    TTF_Font *font_med   = ap_get_font(AP_FONT_MEDIUM);
+    TTF_Font *font_small = ap_get_font(AP_FONT_SMALL);
+    TTF_Font *font_tiny  = ap_get_font(AP_FONT_TINY);
+
+    ap_theme *theme = ap_get_theme();
+    ap_color text_color = theme->text;
+    ap_color hint_color = theme->hint;
+
+    int y = content_y - scroll_y;
+    int col1_x = pad * 3;
+
+    /* Section title */
+    ap_draw_text(font_med, "3-Day Forecast", col1_x, y, hint_color);
+    y += TTF_FontHeight(font_med) + pad * 2;
+
+    int fc_icon_size = AP_DS(40);
+    for (int i = 0; i < weather->forecast_count; i++) {
+        forecast_day_t *day = &weather->forecast[i];
+        char day_label[64];
+        if (i == 0) snprintf(day_label, sizeof(day_label), "Today");
+        else snprintf(day_label, sizeof(day_label), "%s", day->day_name);
+        int row_top = y;
+        if (day->icon_texture)
+            ap_draw_image(day->icon_texture, col1_x, y, fc_icon_size, fc_icon_size);
+        int text_x = col1_x + fc_icon_size + pad * 2;
+        char line1[128];
+        snprintf(line1, sizeof(line1), "%s  %s", day_label, day->condition_text);
+        ap_draw_text(font_small, line1, text_x, y, text_color);
+        y += TTF_FontHeight(font_small) + 2;
+
+        char line2[128];
+        if (g_settings.use_fahrenheit)
+            snprintf(line2, sizeof(line2), "H:%.0f\xc2\xb0  L:%.0f\xc2\xb0  Rain:%d%%",
+                     day->max_temp_f, day->min_temp_f, day->chance_rain);
+        else
+            snprintf(line2, sizeof(line2), "H:%.0f\xc2\xb0  L:%.0f\xc2\xb0  Rain:%d%%",
+                     day->max_temp_c, day->min_temp_c, day->chance_rain);
+        ap_draw_text(font_tiny, line2, text_x, y, hint_color);
+
+        int row_bottom = y + TTF_FontHeight(font_tiny);
+        int min_bottom = row_top + fc_icon_size;
+        y = (row_bottom > min_bottom ? row_bottom : min_bottom) + pad;
+
+        /* Divider between days */
+        if (i < weather->forecast_count - 1) {
+            ap_draw_rect(pad * 3, y, sw - pad * 6, 1, hint_color);
+            y += pad * 2;
+        }
+    }
+
+    y += pad * 2;
+    *total_h = y + scroll_y - content_y;
+}
+
+static void draw_tab_hourly(weather_data_t *weather, int content_y, int content_h,
+                             int scroll_y, int *total_h) {
+    int sw = ap_get_screen_width();
+    int pad = AP_DS(5);
+
+    TTF_Font *font_med   = ap_get_font(AP_FONT_MEDIUM);
+    TTF_Font *font_small = ap_get_font(AP_FONT_SMALL);
+    TTF_Font *font_tiny  = ap_get_font(AP_FONT_TINY);
+
+    ap_theme *theme = ap_get_theme();
+    ap_color text_color = theme->text;
+    ap_color hint_color = theme->hint;
+
+    int y = content_y - scroll_y;
+    int col1_x = pad * 3;
+
+    /* Section title */
+    ap_draw_text(font_med, "Hourly", col1_x, y, hint_color);
+    y += TTF_FontHeight(font_med) + pad * 2;
+
+    int icon_size = AP_DS(28);
+    int row_h = icon_size + pad;
+
+    int start_hour = 0;
+    if (weather->last_updated[0]) {
+        int cur_hour = 0;
+        const char *space = strchr(weather->last_updated, ' ');
+        if (space) sscanf(space + 1, "%d", &cur_hour);
+        char date_prefix[16] = {0};
+        strncpy(date_prefix, weather->last_updated, 10);
+        for (int i = 0; i < weather->hour_count; i++) {
+            int h_hour = 0;
+            const char *hs = strchr(weather->hours[i].time, ' ');
+            if (hs) sscanf(hs + 1, "%d", &h_hour);
+            if (strncmp(weather->hours[i].time, date_prefix, 10) == 0 && h_hour >= cur_hour) {
+                start_hour = i;
+                break;
+            }
+        }
+    }
+
+    int shown = 0;
+    for (int i = start_hour; i < weather->hour_count && shown < 24; i++, shown++) {
+        hourly_t *hr = &weather->hours[i];
+
+        if (hr->icon_texture)
+            ap_draw_image(hr->icon_texture, col1_x, y, icon_size, icon_size);
+
+        int text_x = col1_x + icon_size + pad * 2;
+        int text_y = y + (icon_size - TTF_FontHeight(font_small)) / 2;
+
+        char temp_str[32];
+        if (g_settings.use_fahrenheit)
+            snprintf(temp_str, sizeof(temp_str), "%.0f\xc2\xb0""F", hr->temp_f);
+        else
+            snprintf(temp_str, sizeof(temp_str), "%.0f\xc2\xb0""C", hr->temp_c);
+
+        /* Reserve space for rain % on right */
+        int rain_reserve = AP_DS(35);
+        int max_text_w = sw - text_x - pad * 3 - rain_reserve;
+
+        char line[128];
+        snprintf(line, sizeof(line), "%-6s  %s  %s", hr->hour_label, temp_str, hr->condition_text);
+        ap_draw_text_ellipsized(font_small, line, text_x, text_y, text_color, max_text_w);
+
+        if (hr->chance_rain > 0) {
+            char rain[16];
+            snprintf(rain, sizeof(rain), "%d%%", hr->chance_rain);
+            int rain_w = ap_measure_text(font_tiny, rain);
+            ap_draw_text(font_tiny, rain, sw - rain_w - pad * 3,
+                         text_y + (TTF_FontHeight(font_small) - TTF_FontHeight(font_tiny)) / 2,
+                         hint_color);
+        }
+
+        y += row_h;
+    }
+
+    if (shown == 0) {
+        ap_draw_text(font_small, "No hourly data available", pad * 3, y, hint_color);
+        y += TTF_FontHeight(font_small) + pad;
+    }
+
+    *total_h = y + scroll_y - content_y;
+}
+
+static void draw_tab_astro(weather_data_t *weather, int content_y, int content_h,
+                            int scroll_y, int *total_h) {
+    int sw = ap_get_screen_width();
+    int pad = AP_DS(5);
+
+    TTF_Font *font_med   = ap_get_font(AP_FONT_MEDIUM);
+    TTF_Font *font_small = ap_get_font(AP_FONT_SMALL);
+
+    ap_theme *theme = ap_get_theme();
+    ap_color text_color = theme->text;
+    ap_color hint_color = theme->hint;
+
+    int y = content_y - scroll_y;
+    int col1_x = pad * 3;
+    int val_x = pad * 3 + AP_DS(100);
+    int row_h = TTF_FontHeight(font_small) + pad;
+
+    /* Section title */
+    ap_draw_text(font_med, "Astronomy", col1_x, y, hint_color);
+    y += TTF_FontHeight(font_med) + pad * 2;
+
+    for (int d = 0; d < weather->forecast_count; d++) {
+        forecast_day_t *day = &weather->forecast[d];
+
+        char header[64];
+        if (d == 0) snprintf(header, sizeof(header), "Today  (%s)", day->date);
+        else snprintf(header, sizeof(header), "%s  (%s)", day->day_name, day->date);
+        ap_draw_text(font_small, header, col1_x, y, text_color);
+        y += TTF_FontHeight(font_small) + pad;
+
+        if (day->sunrise[0]) {
+            int sun_icon_size = TTF_FontHeight(font_small);
+            if (g_sunrise_icon)
+                ap_draw_image(g_sunrise_icon, col1_x, y, sun_icon_size, sun_icon_size);
+            ap_draw_text(font_small, "Sunrise", col1_x + sun_icon_size + pad, y, hint_color);
+            ap_draw_text(font_small, day->sunrise, val_x, y, text_color);
+            y += row_h;
+        }
+        if (day->sunset[0]) {
+            int sun_icon_size = TTF_FontHeight(font_small);
+            if (g_sunset_icon)
+                ap_draw_image(g_sunset_icon, col1_x, y, sun_icon_size, sun_icon_size);
+            ap_draw_text(font_small, "Sunset", col1_x + sun_icon_size + pad, y, hint_color);
+            ap_draw_text(font_small, day->sunset, val_x, y, text_color);
+            y += row_h;
+        }
+
+        if (day->sunrise[0] && day->sunset[0]) {
+            int sr_h = 0, sr_m = 0, ss_h = 0, ss_m = 0;
+            char sr_ampm[4] = {0}, ss_ampm[4] = {0};
+            sscanf(day->sunrise, "%d:%d %2s", &sr_h, &sr_m, sr_ampm);
+            sscanf(day->sunset, "%d:%d %2s", &ss_h, &ss_m, ss_ampm);
+            if (sr_ampm[0] == 'P' && sr_h != 12) sr_h += 12;
+            if (sr_ampm[0] == 'A' && sr_h == 12) sr_h = 0;
+            if (ss_ampm[0] == 'P' && ss_h != 12) ss_h += 12;
+            if (ss_ampm[0] == 'A' && ss_h == 12) ss_h = 0;
+            int sr_mins = sr_h * 60 + sr_m;
+            int ss_mins = ss_h * 60 + ss_m;
+            int day_len = ss_mins - sr_mins;
+            if (day_len > 0) {
+                char daylen[32];
+                snprintf(daylen, sizeof(daylen), "%dh %dm", day_len / 60, day_len % 60);
+                ap_draw_text(font_small, "Day Length", col1_x, y, hint_color);
+                ap_draw_text(font_small, daylen, val_x, y, text_color);
+                y += row_h;
+            }
+        }
+
+        y += pad;
+
+        if (day->moonrise[0]) {
+            ap_draw_text(font_small, "Moonrise", col1_x, y, hint_color);
+            ap_draw_text(font_small, day->moonrise, val_x, y, text_color);
+            y += row_h;
+        }
+        if (day->moonset[0]) {
+            ap_draw_text(font_small, "Moonset", col1_x, y, hint_color);
+            ap_draw_text(font_small, day->moonset, val_x, y, text_color);
+            y += row_h;
+        }
+        if (day->moon_phase[0]) {
+            ap_draw_text(font_small, "Phase", col1_x, y, hint_color);
+            ap_draw_text(font_small, day->moon_phase, val_x, y, text_color);
+            y += row_h;
+        }
+        if (day->moon_illumination > 0) {
+            char illum[16];
+            snprintf(illum, sizeof(illum), "%d%%", day->moon_illumination);
+            ap_draw_text(font_small, "Illumination", col1_x, y, hint_color);
+            ap_draw_text(font_small, illum, val_x, y, text_color);
+            y += row_h;
+        }
+
+        y += pad;
+        if (d < weather->forecast_count - 1) {
+            ap_draw_rect(pad * 3, y, sw - pad * 6, 1, hint_color);
+            y += pad * 2;
+        }
+    }
+
+    *total_h = y + scroll_y - content_y;
+}
+
+/* -----------------------------------------------------------------------
+ * Page indicator dots (drawn with circles)
+ * ----------------------------------------------------------------------- */
+
+static void draw_page_dots(int count, int active, int x, int y) {
+    ap_theme *theme = ap_get_theme();
+    ap_color active_color = theme->text;
+    ap_color inactive_color = { theme->hint.r, theme->hint.g, theme->hint.b, 80 };
+
+    int dot_r = AP_DS(3);
+    int dot_spacing = dot_r * 4;
+
+    for (int i = 0; i < count; i++) {
+        int dx = x + i * dot_spacing;
+        ap_color c = (i == active) ? active_color : inactive_color;
+        ap_draw_circle(dx, y + dot_r, dot_r, c);
+    }
+}
+
+/* -----------------------------------------------------------------------
+ * Screens: Weather display with page dots
  * ----------------------------------------------------------------------- */
 
 static void show_weather_screen(void) {
     int running = 1;
     int scroll_y = 0;
+    int active_page = TAB_CURRENT;
+    int last_max_scroll = 0;
 
     while (running) {
         weather_data_t *weather = &g_weather_cache[g_current_location];
@@ -1361,13 +1693,29 @@ static void show_weather_screen(void) {
                     case AP_BTN_Y:
                         if (!ev.repeated) {
                             show_settings();
-                            /* Re-fetch current location after settings */
                             if (g_location_count > 0) {
                                 if (g_current_location >= g_location_count)
                                     g_current_location = get_home_index();
                                 fetch_weather_for_location(g_current_location);
                             }
                             scroll_y = 0;
+                            last_max_scroll = 0;
+                        }
+                        break;
+                    case AP_BTN_LEFT:
+                        if (!ev.repeated) {
+                            active_page--;
+                            if (active_page < 0) active_page = TAB_COUNT - 1;
+                            scroll_y = 0;
+                            last_max_scroll = 0;
+                        }
+                        break;
+                    case AP_BTN_RIGHT:
+                        if (!ev.repeated) {
+                            active_page++;
+                            if (active_page >= TAB_COUNT) active_page = 0;
+                            scroll_y = 0;
+                            last_max_scroll = 0;
                         }
                         break;
                     case AP_BTN_L1:
@@ -1379,6 +1727,7 @@ static void show_weather_screen(void) {
                             fetch_weather_for_location(next);
                             g_current_location = next;
                             scroll_y = 0;
+                            last_max_scroll = 0;
                         }
                         break;
                     case AP_BTN_R1:
@@ -1390,8 +1739,8 @@ static void show_weather_screen(void) {
                             fetch_weather_for_location(next);
                             g_current_location = next;
                             scroll_y = 0;
+                            last_max_scroll = 0;
                         }
-                        break;
                         break;
                     case AP_BTN_UP:
                         if (scroll_y > 0) scroll_y -= SCROLL_STEP;
@@ -1399,6 +1748,7 @@ static void show_weather_screen(void) {
                         break;
                     case AP_BTN_DOWN:
                         scroll_y += SCROLL_STEP;
+                        if (scroll_y > last_max_scroll) scroll_y = last_max_scroll;
                         break;
                     default:
                         break;
@@ -1413,34 +1763,19 @@ static void show_weather_screen(void) {
         int sh = ap_get_screen_height();
         int pad = AP_DS(5);
 
-        TTF_Font *font_xl    = ap_get_font(AP_FONT_EXTRA_LARGE);
         TTF_Font *font_med   = ap_get_font(AP_FONT_MEDIUM);
-        TTF_Font *font_small = ap_get_font(AP_FONT_SMALL);
         TTF_Font *font_tiny  = ap_get_font(AP_FONT_TINY);
 
         ap_theme *theme = ap_get_theme();
-        ap_color text_color = theme->text;
         ap_color hint_color = theme->hint;
 
         int hint_font_h = TTF_FontHeight(font_tiny);
         int footer_h = hint_font_h + pad * 2;
 
-        int content_top = pad;
-        int content_bottom = sh - footer_h;
-        int content_h = content_bottom - content_top;
+        /* Header line: location name (left) + dots (right) */
+        int y = pad * 3;
 
-        SDL_Rect clip = { 0, content_top, sw, content_h };
-        SDL_RenderSetClipRect(ap__g.renderer, &clip);
-
-        int y = content_top - scroll_y;
-
-        if (!weather->valid) {
-            scroll_y = 0;
-            ap_draw_text(font_med, "No weather data", pad * 3, content_top + content_h / 3, hint_color);
-            ap_draw_text(font_small, "Press Y for settings",
-                         pad * 3, content_top + content_h / 3 + TTF_FontHeight(font_med) + pad, hint_color);
-        } else {
-            /* Location name + indicator */
+        if (weather->valid) {
             char location_full[512];
             if (weather->region[0])
                 snprintf(location_full, sizeof(location_full), "%s, %s",
@@ -1457,164 +1792,83 @@ static void show_weather_screen(void) {
             } else {
                 ap_draw_text(font_med, location_full, pad * 3, y, hint_color);
             }
-            y += TTF_FontHeight(font_med) + pad;
+        } else {
+            ap_draw_text(font_med, "Nimbus", pad * 3, y, hint_color);
+        }
 
-            /* Icon + Temperature */
-            int icon_size = AP_DS(64);
-            int icon_x = pad * 3;
+        /* Dots right-aligned on same line */
+        int dot_r = AP_DS(3);
+        int dot_spacing = dot_r * 4;
+        int dots_total_w = (TAB_COUNT - 1) * dot_spacing;
+        int dots_x = sw - pad * 3 - dots_total_w;
+        int dots_y = y + (TTF_FontHeight(font_med) - dot_r * 2) / 2;
+        draw_page_dots(TAB_COUNT, active_page, dots_x, dots_y);
 
-            if (weather->icon_texture)
-                ap_draw_image(weather->icon_texture, icon_x, y, icon_size, icon_size);
+        y += TTF_FontHeight(font_med) + pad * 2;
 
-            char temp_str[32];
-            if (g_settings.use_fahrenheit)
-                snprintf(temp_str, sizeof(temp_str), "%.0f\xc2\xb0""F", weather->temp_f);
-            else
-                snprintf(temp_str, sizeof(temp_str), "%.0f\xc2\xb0""C", weather->temp_c);
+        /* Divider */
+        ap_draw_rect(pad * 3, y, sw - pad * 6, 1, hint_color);
+        y += pad;
 
-            int temp_x = icon_x + icon_size + pad * 2;
-            int temp_y = y + (icon_size / 2) - TTF_FontHeight(font_xl) / 2 - pad;
-            ap_draw_text(font_xl, temp_str, temp_x, temp_y, text_color);
+        int content_y = y;
+        int content_bottom = sh - footer_h;
+        int content_h = content_bottom - content_y;
 
-            int cond_y = temp_y + TTF_FontHeight(font_xl) + 2;
-            ap_draw_text(font_med, weather->condition_text, temp_x, cond_y, hint_color);
+        SDL_Rect clip = { 0, content_y, sw, content_h };
+        SDL_RenderSetClipRect(ap__g.renderer, &clip);
 
-            y += icon_size + pad * 2;
-
-            /* Divider */
-            ap_draw_rect(pad * 3, y, sw - pad * 6, 1, hint_color);
-            y += pad * 2;
-
-            /* Details */
-            int col1_x = pad * 3;
-            int col2_x = sw / 2 + pad;
-            int row_h = TTF_FontHeight(font_small) + pad;
-
-            char feels_str[32], humidity_str[32], wind_str[64];
-            char precip_str[32], cloud_str[32], uv_str[32];
-
-            if (g_settings.use_fahrenheit) {
-                snprintf(feels_str, sizeof(feels_str), "Feels like %.0f\xc2\xb0""F", weather->feels_like_f);
-                snprintf(wind_str, sizeof(wind_str), "Wind: %.0f mph %s", weather->wind_mph, weather->wind_dir);
-                snprintf(precip_str, sizeof(precip_str), "Precip: %.2f in", weather->precip_in);
-            } else {
-                snprintf(feels_str, sizeof(feels_str), "Feels like %.0f\xc2\xb0""C", weather->feels_like_c);
-                snprintf(wind_str, sizeof(wind_str), "Wind: %.0f km/h %s", weather->wind_kph, weather->wind_dir);
-                snprintf(precip_str, sizeof(precip_str), "Precip: %.1f mm", weather->precip_mm);
-            }
-            snprintf(humidity_str, sizeof(humidity_str), "Humidity: %d%%", weather->humidity);
-            snprintf(cloud_str, sizeof(cloud_str), "Cloud: %d%%", weather->cloud);
-            snprintf(uv_str, sizeof(uv_str), "UV: %.0f", weather->uv);
-
-            ap_draw_text(font_small, feels_str, col1_x, y, text_color);
-            ap_draw_text(font_small, humidity_str, col2_x, y, text_color);
-            y += row_h;
-            ap_draw_text(font_small, wind_str, col1_x, y, text_color);
-            ap_draw_text(font_small, cloud_str, col2_x, y, text_color);
-            y += row_h;
-            ap_draw_text(font_small, precip_str, col1_x, y, text_color);
-            ap_draw_text(font_small, uv_str, col2_x, y, text_color);
-            y += row_h;
-
-            /* Sunrise / Sunset */
-            if (weather->forecast_count > 0) {
-                forecast_day_t *today = &weather->forecast[0];
-                if (today->sunrise[0] && today->sunset[0]) {
-                    int sun_icon_size = TTF_FontHeight(font_small);
-                    int text_offset = sun_icon_size + pad;
-
-                    if (g_sunrise_icon)
-                        ap_draw_image(g_sunrise_icon, col1_x, y, sun_icon_size, sun_icon_size);
-                    ap_draw_text(font_small, today->sunrise, col1_x + text_offset, y, text_color);
-
-                    if (g_sunset_icon)
-                        ap_draw_image(g_sunset_icon, col2_x, y, sun_icon_size, sun_icon_size);
-                    ap_draw_text(font_small, today->sunset, col2_x + text_offset, y, text_color);
-
-                    y += row_h;
-                }
-                if (today->moon_phase[0]) {
-                    char moon_str[64];
-                    snprintf(moon_str, sizeof(moon_str), "Moon: %s", today->moon_phase);
-                    ap_draw_text(font_small, moon_str, col1_x, y, hint_color);
-                    y += row_h;
-                }
+        if (!weather->valid) {
+            scroll_y = 0;
+            ap_draw_text(font_med, "No weather data", pad * 3,
+                         content_y + content_h / 3, hint_color);
+            TTF_Font *font_small = ap_get_font(AP_FONT_SMALL);
+            ap_draw_text(font_small, "Press Y for settings",
+                         pad * 3, content_y + content_h / 3 + TTF_FontHeight(font_med) + pad,
+                         hint_color);
+        } else {
+            int total_h = 0;
+            switch (active_page) {
+                case TAB_CURRENT:
+                    draw_tab_current(weather, content_y, content_h, scroll_y, &total_h);
+                    break;
+                case TAB_FORECAST:
+                    draw_tab_forecast(weather, content_y, content_h, scroll_y, &total_h);
+                    break;
+                case TAB_HOURLY:
+                    draw_tab_hourly(weather, content_y, content_h, scroll_y, &total_h);
+                    break;
+                case TAB_ASTRO:
+                    draw_tab_astro(weather, content_y, content_h, scroll_y, &total_h);
+                    break;
             }
 
-            y += pad;
-
-            /* Divider */
-            ap_draw_rect(pad * 3, y, sw - pad * 6, 1, hint_color);
-            y += pad * 2;
-
-            /* Forecast */
-            ap_draw_text(font_med, "Forecast", pad * 3, y, text_color);
-            y += TTF_FontHeight(font_med) + pad;
-
-            int fc_icon_size = AP_DS(40);
-            for (int i = 0; i < weather->forecast_count; i++) {
-                forecast_day_t *day = &weather->forecast[i];
-
-                char day_label[64];
-                if (i == 0) snprintf(day_label, sizeof(day_label), "Today");
-                else snprintf(day_label, sizeof(day_label), "%s", day->day_name);
-
-                int row_top = y;
-
-                if (day->icon_texture)
-                    ap_draw_image(day->icon_texture, col1_x, y, fc_icon_size, fc_icon_size);
-
-                int text_x = col1_x + fc_icon_size + pad * 2;
-
-                char line1[128];
-                snprintf(line1, sizeof(line1), "%s  %s", day_label, day->condition_text);
-                ap_draw_text(font_small, line1, text_x, y, text_color);
-                y += TTF_FontHeight(font_small) + 2;
-
-                char line2[128];
-                if (g_settings.use_fahrenheit)
-                    snprintf(line2, sizeof(line2), "H:%.0f\xc2\xb0  L:%.0f\xc2\xb0  Rain:%d%%",
-                             day->max_temp_f, day->min_temp_f, day->chance_rain);
-                else
-                    snprintf(line2, sizeof(line2), "H:%.0f\xc2\xb0  L:%.0f\xc2\xb0  Rain:%d%%",
-                             day->max_temp_c, day->min_temp_c, day->chance_rain);
-                ap_draw_text(font_tiny, line2, text_x, y, hint_color);
-
-                int row_bottom = y + TTF_FontHeight(font_tiny);
-                int min_bottom = row_top + fc_icon_size;
-                y = (row_bottom > min_bottom ? row_bottom : min_bottom) + pad;
-            }
-
-            y += pad;
-
-            /* Updated */
-            char updated_str[128];
-            snprintf(updated_str, sizeof(updated_str), "Updated: %s", weather->last_updated);
-            ap_draw_text(font_tiny, updated_str, pad * 3, y, hint_color);
-            y += TTF_FontHeight(font_tiny) + pad * 2;
-
-            /* Clamp scroll */
-            int total_content = y + scroll_y - content_top;
-            int max_scroll = total_content - content_h;
+            /* Clamp scroll and cache max */
+            int max_scroll = total_h - content_h;
             if (max_scroll < 0) max_scroll = 0;
+            last_max_scroll = max_scroll;
             if (scroll_y > max_scroll) scroll_y = max_scroll;
         }
 
         SDL_RenderSetClipRect(ap__g.renderer, NULL);
 
         /* Hints */
-        int hint_y = sh - hint_font_h - pad;
-        ap_draw_text(font_tiny, "B: Quit", pad * 2, hint_y, hint_color);
 
         if (g_location_count > 1) {
-            /* L1/R1 hint in the middle */
-            const char *loc_hint = "L1/R1: Location";
-            int loc_hint_w = ap_measure_text(font_tiny, loc_hint);
-            ap_draw_text(font_tiny, loc_hint, (sw - loc_hint_w) / 2, hint_y, hint_color);
+            pakkit_hint hints[] = {
+                {.button = "B",.label = "Quit" },
+                {.button = "L/R",.label = "View" },
+                {.button = "L1/R1",.label = "City" },
+                {.button = "Y",.label = "Menu" },
+            };
+            pakkit_draw_hints(hints, 4);
+        } else {
+            pakkit_hint hints[] = {
+                {.button = "B",.label = "Quit" },
+                {.button = "L/R",.label = "View" },
+                {.button = "Y",.label = "Menu" },
+            };
+            pakkit_draw_hints(hints, 3);
         }
-
-        int menu_w = ap_measure_text(font_tiny, "Y: Menu");
-        ap_draw_text(font_tiny, "Y: Menu", sw - menu_w - pad * 2, hint_y, hint_color);
 
         ap_present();
     }
@@ -1637,7 +1891,6 @@ int main(int argc, char *argv[]) {
 
     settings_load();
 
-    /* Truncate log file so it only contains the current session */
     const char *log_path = ap_resolve_log_path("nimbus");
     if (log_path) {
         FILE *lf = fopen(log_path, "w");
@@ -1665,14 +1918,12 @@ int main(int argc, char *argv[]) {
             snprintf(splash_path, sizeof(splash_path), "%s/res/splash.png", pak_dir);
         else
             snprintf(splash_path, sizeof(splash_path), "res/splash.png");
-
         SDL_Texture *splash = ap_load_image(splash_path);
         if (splash) {
             int sw = ap_get_screen_width();
             int sh = ap_get_screen_height();
             int img_w, img_h;
             SDL_QueryTexture(splash, NULL, NULL, &img_w, &img_h);
-
             int max_w = sw - AP_DS(5) * 8;
             int max_h = sh - AP_DS(5) * 8;
             float scale_w = (float)max_w / (float)img_w;
@@ -1682,12 +1933,10 @@ int main(int argc, char *argv[]) {
             int draw_h = (int)(img_h * scale);
             int x = (sw - draw_w) / 2;
             int y = (sh - draw_h) / 2;
-
             ap_clear_screen();
             ap_draw_background();
             ap_draw_image(splash, x, y, draw_w, draw_h);
             ap_present();
-
             int waited = 0;
             while (waited < 1000) {
                 ap_input_event ev;
@@ -1697,49 +1946,35 @@ int main(int argc, char *argv[]) {
                 SDL_Delay(16);
                 waited += 16;
             }
-
             SDL_DestroyTexture(splash);
         }
     }
 
     ap_log("=== Nimbus v%s starting ===", NIMBUS_VERSION);
-
-    /* Initialize weather cache */
     memset(g_weather_cache, 0, sizeof(g_weather_cache));
 
-    /* API key: load or run setup */
     if (load_api_key() != 0) {
         if (show_api_key_setup() != 0) {
-            ap_quit();
-            curl_global_cleanup();
-            return 0;
+            ap_quit(); curl_global_cleanup(); return 0;
         }
     }
 
-    /* Locations — load or auto-detect */
     if (load_locations() != 0) {
         g_locations[0] = (location_t){.is_home = 1 };
         snprintf(g_locations[0].name, MAX_LOCATION, "auto:ip");
         g_location_count = 1;
     }
 
-    /* Start at home location */
     g_current_location = get_home_index();
 
-    /* Check WiFi before fetching */
     if (ap__get_wifi_strength() == 0) {
-        pakkit_message("WiFi not connected.\n\n"
-                       "Connect to WiFi and\n"
-                       "reopen Nimbus.", "Quit");
-        ap_quit();
-        curl_global_cleanup();
-        return 0;
+        pakkit_message("WiFi not connected.\n\nConnect to WiFi and\nreopen Nimbus.", "Quit");
+        ap_quit(); curl_global_cleanup(); return 0;
     }
 
     fetch_weather_for_location(g_current_location);
     show_weather_screen();
 
-    /* Cleanup */
     for (int i = 0; i < g_location_count; i++)
         free_weather_textures(&g_weather_cache[i]);
     if (g_sunrise_icon) SDL_DestroyTexture(g_sunrise_icon);
