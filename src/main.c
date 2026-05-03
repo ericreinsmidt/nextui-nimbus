@@ -43,7 +43,7 @@
 #define MAX_FORECAST_DAYS 3
 #define MAX_HOURS_PER_DAY 24
 #define MAX_HOURS        72
-#define MAX_LOCATIONS    5
+#define MAX_LOCATIONS    10
 
 #define DEFAULT_BG_R     30
 #define DEFAULT_BG_G     30
