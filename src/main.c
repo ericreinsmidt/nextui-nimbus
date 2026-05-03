@@ -1566,7 +1566,7 @@ static void draw_tab_astro(weather_data_t *weather, int content_y, int content_h
     int row_h = TTF_FontHeight(font_small) + pad;
 
     /* Section title */
-    ap_draw_text(font_med, "Astronomy", col1_x, y, hint_color);
+    ap_draw_text(font_med, "Sun & Moon", col1_x, y, hint_color);
     y += TTF_FontHeight(font_med) + pad * 2;
 
     for (int d = 0; d < weather->forecast_count; d++) {
