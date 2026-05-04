@@ -34,7 +34,7 @@
  * Constants
  * ----------------------------------------------------------------------- */
 
-#define NIMBUS_VERSION   "0.2.0"
+#define NIMBUS_VERSION   "1.0.0"
 #define MAX_PATH_LEN     1280
 #define MAX_LOCATION     256
 #define MAX_LINE         512
@@ -160,6 +160,8 @@ typedef struct {
     int            hour_count;
 
     int    valid;
+    int    is_cached;
+    char   cached_time[32];
     SDL_Texture *icon_texture;
 } weather_data_t;
 
@@ -238,6 +240,80 @@ static void format_hour_label(const char *time_str, char *out, size_t out_size) 
     else if (hour < 12) snprintf(out, out_size, "%d AM", hour);
     else if (hour == 12) snprintf(out, out_size, "12 PM");
     else snprintf(out, out_size, "%d PM", hour - 12);
+}
+
+/* -----------------------------------------------------------------------
+ * WiFi check
+ * ----------------------------------------------------------------------- */
+
+static int check_wifi(void) {
+    return ap__get_wifi_strength() > 0;
+}
+
+/* -----------------------------------------------------------------------
+ * Offline weather cache (JSON per location)
+ * ----------------------------------------------------------------------- */
+
+static void weather_cache_path(int loc_idx, char *out, size_t out_size) {
+    if (g_cache_dir[0] == '\0' || loc_idx < 0 || loc_idx >= g_location_count) {
+        out[0] = '\0';
+        return;
+    }
+    /* Use a hash of location name + lat_lon for a stable filename */
+    location_t *loc = &g_locations[loc_idx];
+    unsigned long hash = 5381;
+    const char *p = loc->name;
+    while (*p) { hash = ((hash << 5) + hash) + (unsigned char)*p; p++; }
+    p = loc->lat_lon;
+    while (*p) { hash = ((hash << 5) + hash) + (unsigned char)*p; p++; }
+    snprintf(out, out_size, "%s/weather_%08lx.json", g_cache_dir, hash);
+}
+
+static void save_weather_json(int loc_idx, const char *json_str) {
+    char path[MAX_PATH_LEN];
+    weather_cache_path(loc_idx, path, sizeof(path));
+    if (path[0] == '\0') return;
+    FILE *f = fopen(path, "w");
+    if (!f) { ap_log("weather_cache: could not write %s", path); return; }
+    fprintf(f, "%s", json_str);
+    fclose(f);
+    ap_log("weather_cache: saved for location %d (%s)", loc_idx, g_locations[loc_idx].name);
+}
+
+static char *load_weather_json(int loc_idx) {
+    char path[MAX_PATH_LEN];
+    weather_cache_path(loc_idx, path, sizeof(path));
+    if (path[0] == '\0') return NULL;
+    FILE *f = fopen(path, "r");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (fsize <= 0) { fclose(f); return NULL; }
+    char *data = malloc((size_t)fsize + 1);
+    if (!data) { fclose(f); return NULL; }
+    size_t read_bytes = fread(data, 1, (size_t)fsize, f);
+    fclose(f);
+    data[read_bytes] = '\0';
+    ap_log("weather_cache: loaded %zu bytes for location %d", read_bytes, loc_idx);
+    return data;
+}
+
+static void get_weather_cache_time(int loc_idx, char *out, size_t out_size) {
+    out[0] = '\0';
+    char path[MAX_PATH_LEN];
+    weather_cache_path(loc_idx, path, sizeof(path));
+    if (path[0] == '\0') return;
+    struct stat st;
+    if (stat(path, &st) != 0) return;
+    struct tm *tm_info = localtime(&st.st_mtime);
+    if (!tm_info) return;
+    int hour = tm_info->tm_hour;
+    int min = tm_info->tm_min;
+    const char *ampm = (hour >= 12) ? "PM" : "AM";
+    if (hour == 0) hour = 12;
+    else if (hour > 12) hour -= 12;
+    snprintf(out, out_size, "%d:%02d %s", hour, min, ampm);
 }
 
 /* -----------------------------------------------------------------------
@@ -746,7 +822,7 @@ static int fetch_url(const char *url, fetch_buf_t *buf) {
     curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 10L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "Nimbus/0.2");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "Nimbus/0.3");
     const char *ca = getenv("CURL_CA_BUNDLE");
     if (ca) {
         curl_easy_setopt(curl, CURLOPT_CAINFO, ca);
@@ -790,6 +866,18 @@ static SDL_Texture *fetch_and_load_icon(const char *icon_url) {
     if (f) { fwrite(buf.data, 1, buf.size, f); fclose(f); }
     free(buf.data);
     return ap_load_image(cache_path);
+}
+
+static SDL_Texture *load_cached_icon(const char *icon_url) {
+    if (!icon_url || !icon_url[0] || g_cache_dir[0] == '\0') return NULL;
+    const char *slash = strrchr(icon_url, '/');
+    const char *fname = slash ? slash + 1 : "icon.png";
+    const char *day_night = strstr(icon_url, "/day/") ? "day" : "night";
+    char cache_path[MAX_PATH_LEN];
+    snprintf(cache_path, sizeof(cache_path), "%s/%s_%s", g_cache_dir, day_night, fname);
+    if (access(cache_path, R_OK) == 0)
+        return ap_load_image(cache_path);
+    return NULL;
 }
 
 /* -----------------------------------------------------------------------
@@ -996,6 +1084,54 @@ static int parse_weather_data(const char *json_str, weather_data_t *weather) {
     return 0;
 }
 
+static void load_weather_icons(weather_data_t *weather, int offline) {
+    if (weather->icon_url[0]) {
+        if (weather->icon_texture) SDL_DestroyTexture(weather->icon_texture);
+        weather->icon_texture = offline
+            ? load_cached_icon(weather->icon_url)
+            : fetch_and_load_icon(weather->icon_url);
+    }
+    for (int i = 0; i < weather->forecast_count; i++) {
+        if (weather->forecast[i].icon_url[0])
+            weather->forecast[i].icon_texture = offline
+                ? load_cached_icon(weather->forecast[i].icon_url)
+                : fetch_and_load_icon(weather->forecast[i].icon_url);
+    }
+    for (int i = 0; i < weather->hour_count; i++) {
+        if (weather->hours[i].icon_url[0])
+            weather->hours[i].icon_texture = offline
+                ? load_cached_icon(weather->hours[i].icon_url)
+                : fetch_and_load_icon(weather->hours[i].icon_url);
+    }
+    if (!g_sunrise_icon) {
+        const char *sun_url = "//cdn.weatherapi.com/weather/64x64/day/113.png";
+        g_sunrise_icon = offline ? load_cached_icon(sun_url) : fetch_and_load_icon(sun_url);
+    }
+    if (!g_sunset_icon) {
+        const char *moon_url = "//cdn.weatherapi.com/weather/64x64/night/113.png";
+        g_sunset_icon = offline ? load_cached_icon(moon_url) : fetch_and_load_icon(moon_url);
+    }
+}
+
+static int load_weather_from_cache(int loc_idx) {
+    if (loc_idx < 0 || loc_idx >= g_location_count) return -1;
+    char *json = load_weather_json(loc_idx);
+    if (!json) return -1;
+
+    weather_data_t *weather = &g_weather_cache[loc_idx];
+    int rc = parse_weather_data(json, weather);
+    free(json);
+    if (rc != 0) return -1;
+
+    weather->is_cached = 1;
+    get_weather_cache_time(loc_idx, weather->cached_time, sizeof(weather->cached_time));
+    load_weather_icons(weather, 1);
+
+    ap_log("weather_cache: loaded cached data for %s (cached at %s)",
+           g_locations[loc_idx].name, weather->cached_time);
+    return 0;
+}
+
 static int fetch_weather_for_location(int loc_idx) {
     if (g_api_key[0] == '\0' || loc_idx < 0 || loc_idx >= g_location_count) return -1;
 
@@ -1036,26 +1172,16 @@ static int fetch_weather_for_location(int loc_idx) {
     if (rc != 0) return -1;
 
     rc = parse_weather_data(buf.data, weather);
-    free(buf.data);
-    if (rc != 0) return rc;
+    if (rc != 0) { free(buf.data); return rc; }
 
-    /* Load icons */
-    if (weather->icon_url[0]) {
-        if (weather->icon_texture) SDL_DestroyTexture(weather->icon_texture);
-        weather->icon_texture = fetch_and_load_icon(weather->icon_url);
-    }
-    for (int i = 0; i < weather->forecast_count; i++) {
-        if (weather->forecast[i].icon_url[0])
-            weather->forecast[i].icon_texture = fetch_and_load_icon(weather->forecast[i].icon_url);
-    }
-    for (int i = 0; i < weather->hour_count; i++) {
-        if (weather->hours[i].icon_url[0])
-            weather->hours[i].icon_texture = fetch_and_load_icon(weather->hours[i].icon_url);
-    }
-    if (!g_sunrise_icon)
-        g_sunrise_icon = fetch_and_load_icon("//cdn.weatherapi.com/weather/64x64/day/113.png");
-    if (!g_sunset_icon)
-        g_sunset_icon = fetch_and_load_icon("//cdn.weatherapi.com/weather/64x64/night/113.png");
+    /* Save raw JSON to offline cache */
+    save_weather_json(loc_idx, buf.data);
+    free(buf.data);
+
+    weather->is_cached = 0;
+    weather->cached_time[0] = '\0';
+
+    load_weather_icons(weather, 0);
 
     if (strcmp(loc->name, "auto:ip") == 0 && weather->location_name[0]) {
         if (weather->region[0])
@@ -1311,17 +1437,12 @@ static void draw_tab_current(weather_data_t *weather, int content_y, int content
     TTF_Font *font_xl    = ap_get_font(AP_FONT_EXTRA_LARGE);
     TTF_Font *font_med   = ap_get_font(AP_FONT_MEDIUM);
     TTF_Font *font_small = ap_get_font(AP_FONT_SMALL);
-    // TTF_Font *font_tiny  = ap_get_font(AP_FONT_TINY);
 
     ap_theme *theme = ap_get_theme();
     ap_color text_color = theme->text;
     ap_color hint_color = theme->hint;
 
     int y = content_y - scroll_y;
-
-    /* Section title */
-    // ap_draw_text(font_med, "Current", pad * 3, y, hint_color);
-    // y += TTF_FontHeight(font_med);
 
     /* Icon + Temperature */
     int icon_size = AP_DS(64);
@@ -1394,12 +1515,6 @@ static void draw_tab_current(weather_data_t *weather, int content_y, int content
     }
 
     y += pad * 2;
-
-    /* Updated */
-    // char updated_str[128];
-    // snprintf(updated_str, sizeof(updated_str), "Updated: %s", weather->last_updated);
-    // ap_draw_text(font_tiny, updated_str, pad * 3, y, hint_color);
-    // y += TTF_FontHeight(font_tiny) + pad * 2;
 
     *total_h = y + scroll_y - content_y;
 }
@@ -1696,7 +1811,11 @@ static void show_weather_screen(void) {
                             if (g_location_count > 0) {
                                 if (g_current_location >= g_location_count)
                                     g_current_location = get_home_index();
-                                fetch_weather_for_location(g_current_location);
+                                if (check_wifi()) {
+                                    fetch_weather_for_location(g_current_location);
+                                } else {
+                                    load_weather_from_cache(g_current_location);
+                                }
                             }
                             scroll_y = 0;
                             last_max_scroll = 0;
@@ -1722,10 +1841,22 @@ static void show_weather_screen(void) {
                         if (!ev.repeated && g_location_count > 1) {
                             int next = g_current_location - 1;
                             if (next < 0) next = g_location_count - 1;
-                            free_weather_textures(&g_weather_cache[next]);
-                            memset(&g_weather_cache[next], 0, sizeof(weather_data_t));
-                            fetch_weather_for_location(next);
-                            g_current_location = next;
+                            /* Try network fetch first, fall back to cache */
+                            if (check_wifi()) {
+                                free_weather_textures(&g_weather_cache[next]);
+                                memset(&g_weather_cache[next], 0, sizeof(weather_data_t));
+                                if (fetch_weather_for_location(next) == 0) {
+                                    g_current_location = next;
+                                } else if (load_weather_from_cache(next) == 0) {
+                                    g_current_location = next;
+                                } else {
+                                    pakkit_message("Could not load weather.\nCheck connection and try again.", "OK");
+                                }
+                            } else if (load_weather_from_cache(next) == 0) {
+                                g_current_location = next;
+                            } else {
+                                pakkit_message("No WiFi and no cached data\nfor this location.", "OK");
+                            }
                             scroll_y = 0;
                             last_max_scroll = 0;
                         }
@@ -1734,16 +1865,28 @@ static void show_weather_screen(void) {
                         if (!ev.repeated && g_location_count > 1) {
                             int next = g_current_location + 1;
                             if (next >= g_location_count) next = 0;
-                            free_weather_textures(&g_weather_cache[next]);
-                            memset(&g_weather_cache[next], 0, sizeof(weather_data_t));
-                            fetch_weather_for_location(next);
-                            g_current_location = next;
+                            /* Try network fetch first, fall back to cache */
+                            if (check_wifi()) {
+                                free_weather_textures(&g_weather_cache[next]);
+                                memset(&g_weather_cache[next], 0, sizeof(weather_data_t));
+                                if (fetch_weather_for_location(next) == 0) {
+                                    g_current_location = next;
+                                } else if (load_weather_from_cache(next) == 0) {
+                                    g_current_location = next;
+                                } else {
+                                    pakkit_message("Could not load weather.\nCheck connection and try again.", "OK");
+                                }
+                            } else if (load_weather_from_cache(next) == 0) {
+                                g_current_location = next;
+                            } else {
+                                pakkit_message("No WiFi and no cached data\nfor this location.", "OK");
+                            }
                             scroll_y = 0;
                             last_max_scroll = 0;
                         }
                         break;
                     case AP_BTN_UP:
-                        if (scroll_y > 0) scroll_y -= SCROLL_STEP;
+                        scroll_y -= SCROLL_STEP;
                         if (scroll_y < 0) scroll_y = 0;
                         break;
                     case AP_BTN_DOWN:
@@ -1784,14 +1927,20 @@ static void show_weather_screen(void) {
                 snprintf(location_full, sizeof(location_full), "%s",
                          weather->location_name);
 
+            char header_text[640];
             if (g_location_count > 1) {
-                char loc_with_idx[560];
-                snprintf(loc_with_idx, sizeof(loc_with_idx), "%s  (%d/%d)",
+                snprintf(header_text, sizeof(header_text), "%s (%d/%d)",
                          location_full, g_current_location + 1, g_location_count);
-                ap_draw_text(font_med, loc_with_idx, pad * 3, y, hint_color);
             } else {
-                ap_draw_text(font_med, location_full, pad * 3, y, hint_color);
+                snprintf(header_text, sizeof(header_text), "%s", location_full);
             }
+
+            /* Ellipsize header to leave room for dots */
+            int dot_r = AP_DS(3);
+            int dot_spacing = dot_r * 4;
+            int dots_total_w = (TAB_COUNT - 1) * dot_spacing + dot_r * 2;
+            int max_header_w = sw - pad * 3 - dots_total_w - pad * 3;
+            ap_draw_text_ellipsized(font_med, header_text, pad * 3, y, hint_color, max_header_w);
         } else {
             ap_draw_text(font_med, "Nimbus", pad * 3, y, hint_color);
         }
@@ -1809,6 +1958,15 @@ static void show_weather_screen(void) {
         /* Divider */
         ap_draw_rect(pad * 3, y, sw - pad * 6, 1, hint_color);
         y += pad;
+
+        /* Cached indicator — below divider, right-aligned */
+        if (weather->valid && weather->is_cached && weather->cached_time[0]) {
+            char cached_label[64];
+            snprintf(cached_label, sizeof(cached_label), "Cached %s", weather->cached_time);
+            int cached_w = ap_measure_text(font_tiny, cached_label);
+            ap_draw_text(font_tiny, cached_label, sw - cached_w - pad * 3, y, hint_color);
+            y += TTF_FontHeight(font_tiny) + pad;
+        }
 
         int content_y = y;
         int content_bottom = sh - footer_h;
@@ -1967,12 +2125,37 @@ int main(int argc, char *argv[]) {
 
     g_current_location = get_home_index();
 
-    if (ap__get_wifi_strength() == 0) {
-        pakkit_message("WiFi not connected.\n\nConnect to WiFi and\nreopen Nimbus.", "Quit");
-        ap_quit(); curl_global_cleanup(); return 0;
+    /* WiFi check with retry/continue + offline cache fallback */
+    if (!check_wifi()) {
+        /* Try loading from offline cache */
+        int has_cache = (load_weather_from_cache(g_current_location) == 0);
+
+        while (!check_wifi()) {
+            if (has_cache) {
+                int retry = pakkit_confirm(
+                    "No WiFi connection.\nCached weather data available.",
+                    "Retry", "Continue");
+                if (!retry) break; /* Continue with cached data */
+            } else {
+                int retry = pakkit_confirm(
+                    "No WiFi connection.\nNo cached data available.",
+                    "Retry", "Quit");
+                if (!retry) {
+                    ap_quit(); curl_global_cleanup(); return 0;
+                }
+            }
+        }
+
+        if (check_wifi()) {
+            /* WiFi came back — fetch fresh data */
+            fetch_weather_for_location(g_current_location);
+        }
+        /* else: continuing with cached data already loaded */
+    } else {
+        /* WiFi available — fetch normally */
+        fetch_weather_for_location(g_current_location);
     }
 
-    fetch_weather_for_location(g_current_location);
     show_weather_screen();
 
     for (int i = 0; i < g_location_count; i++)

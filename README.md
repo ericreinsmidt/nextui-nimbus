@@ -10,15 +10,17 @@ Built with [PakKit](https://github.com/ericreinsmidt/pakkit) and [Apostrophe](ht
 
 - **Current conditions** -- temperature, feels like, humidity, wind, precipitation, cloud cover, UV index
 - **3-day forecast** -- daily high/low, condition, chance of rain with weather icons
-- **Sunrise & sunset** with inline condition icons
-- **Moon phase** display
+- **Hourly forecast** -- next 24 hours with temperature, condition, and rain chance
+- **Sun & Moon** -- sunrise/sunset, day length, moonrise/moonset, moon phase and illumination for 3 days
+- **Multi-location** -- save up to 10 locations, switch with L1/R1
+- **Offline cache** -- view last-known weather data when WiFi is unavailable
+- **WiFi detection** -- retry/continue dialog on launch, graceful fallback to cached data
 - **F / C toggle** in settings
 - **Location search** -- search by city name, zip code, or postal code via on-screen keyboard
 - **QR code setup** -- enter your API key from your phone by scanning a QR code on the device screen
 - **Auto-detect location** -- uses IP geolocation on first launch if no location is configured
 - **Weather condition icons** -- fetched from WeatherAPI and cached locally
-- **WiFi detection** -- checks for WiFi before fetching weather or starting QR setup
-- **Scrollable layout** -- all weather data on a single custom-drawn screen
+- **4-page layout** -- swipe between Current, Forecast, Hourly, and Sun & Moon with page dot indicator
 - **Minimal UI** -- clean PakKit screens with subtle button hints
 
 ## Supported Devices
@@ -27,16 +29,17 @@ Built with [PakKit](https://github.com/ericreinsmidt/pakkit) and [Apostrophe](ht
 |--------|----------|--------|
 | TrimUI Brick | tg5040 | Working |
 | TrimUI Smart Pro | tg5040 | Working |
+| TrimUI Brick Hammer | tg5040 | Working |
 
 ## Screenshots
 
-| Current | Forecast | Location Search |
-|---------|----------|-----------------|
-| ![Current](assets/screenshots/current.png) | ![Forecast](assets/screenshots/forecast.png) | ![Location](assets/screenshots/location.png) |
+| Current | Forecast | Hourly |
+|---------|----------|--------|
+| ![Current](assets/screenshots/current.png) | ![Forecast](assets/screenshots/forecast.png) | ![Hourly](assets/screenshots/hourly.png) |
 
-| QR Setup | API Key |
-|----------|---------|
-| ![QR Setup](assets/screenshots/qr.png) | ![API Key](assets/screenshots/api.png) |
+| Sun & Moon | Locations | Cached |
+|------------|-----------|--------|
+| ![Astro](assets/screenshots/astro.png) | ![Locations](assets/screenshots/locations.png) | ![Cached](assets/screenshots/cached.png) |
 
 ## Setup
 
@@ -68,27 +71,47 @@ with your API key as the only line.
 
 ### 4. Set Your Location
 
-On first launch, Nimbus auto-detects your location from your IP address. To change it:
+On first launch, Nimbus auto-detects your location from your IP address. To add or change locations:
 
-1. Press **Y** to open the menu
-2. Select **Set Location**
-3. Type a city name, zip code, or postal code
-4. Select your location from the results
+1. Press **Y** to open settings
+2. Select **Locations**
+3. Press **X** to add a new location
+4. Type a city name, zip code, or postal code
+5. Select your location from the results
+
+Use **L1/R1** on the weather screen to switch between saved locations.
 
 ## Controls
 
+### Weather Screen
+
 | Button | Action |
 |--------|--------|
-| **B** | Quit |
-| **Y** | Settings menu |
-| **Up/Down** | Scroll weather data |
+| L/R | Switch pages (Current, Forecast, Hourly, Sun & Moon) |
+| L1/R1 | Switch locations (with 2+ locations) |
+| Up/Down | Scroll |
+| Y | Settings menu |
+| B | Quit |
 
 ### Settings Menu
 
-- **Units** -- toggle between F and C
-- **Set Location** -- search and select a new location
-- **Change API Key** -- re-run the QR code setup to enter a new key
-- **About** -- version and credits
+| Option | Description |
+|--------|-------------|
+| Units | Toggle between F and C |
+| Locations | Add, delete, or set home location |
+| Change API Key | Re-run the QR code setup |
+| About | Version and credits |
+
+### Keyboard
+
+| Button | Action |
+|--------|--------|
+| A | Type selected key |
+| B | Backspace |
+| Start | Confirm input |
+| Y | Cancel |
+| L1 | Toggle shift |
+| R1 | Toggle symbols |
 
 ## Device Paths
 
@@ -96,9 +119,9 @@ On first launch, Nimbus auto-detects your location from your IP address. To chan
 |------|-------------|
 | /mnt/SDCARD/Tools/tg5040/Nimbus.pak/ | App installation |
 | /mnt/SDCARD/.userdata/tg5040/nimbus/config/api_key.txt | API key |
-| /mnt/SDCARD/.userdata/tg5040/nimbus/config/location.txt | Saved location |
+| /mnt/SDCARD/.userdata/tg5040/nimbus/config/locations.txt | Saved locations |
 | /mnt/SDCARD/.userdata/tg5040/nimbus/config/settings.txt | User settings |
-| /mnt/SDCARD/.userdata/tg5040/nimbus/cache/ | Cached weather icons |
+| /mnt/SDCARD/.userdata/tg5040/nimbus/cache/ | Cached weather icons and offline data |
 | /mnt/SDCARD/.userdata/tg5040/logs/nimbus.txt | Log file (current session only) |
 
 ## Building from Source
@@ -139,11 +162,6 @@ Copy the binary and CA certs into the pak:
     mkdir -p ports/tg5040/pak/lib
     cp build/tg5040/lib/cacert.pem ports/tg5040/pak/lib/cacert.pem
 
-### Create Release Zip
-
-    mkdir -p dist
-    cd ports/tg5040/pak && zip -r../../../dist/Nimbus.tg5040.pak.zip. && cd../../..
-
 ### Deploy
 
 Copy ports/tg5040/pak/ to /Tools/tg5040/Nimbus.pak/ on your SD card.
@@ -156,7 +174,7 @@ Copy ports/tg5040/pak/ to /Tools/tg5040/Nimbus.pak/ on your SD card.
 - **JSON Parsing:** [cJSON](https://github.com/DaveGamble/cJSON)
 - **QR Code Generation:** [QR-Code-generator](https://github.com/nayuki/QR-Code-generator) by nayuki
 - **HTTP:** libcurl with static OpenSSL
-- **Target:** TrimUI Brick / Smart Pro (tg5040) running NextUI
+- **Target:** TrimUI Brick / Smart Pro / Brick Hammer (tg5040) running NextUI
 
 ## Credits
 
