@@ -1,5 +1,10 @@
 # Nimbus
 
+![GitHub release](https://img.shields.io/github/v/release/ericreinsmidt/nextui-nimbus)
+![GitHub downloads](https://img.shields.io/github/downloads/ericreinsmidt/nextui-nimbus/total)
+![License](https://img.shields.io/github/license/ericreinsmidt/nextui-nimbus)
+![GitHub stars](https://img.shields.io/github/stars/ericreinsmidt/nextui-nimbus)
+
 ![Nimbus](assets/logo.png)
 
 A weather app for [NextUI](https://github.com/LoveRetro/NextUI) on TrimUI handheld devices.
