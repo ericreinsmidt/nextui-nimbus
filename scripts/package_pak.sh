@@ -3,24 +3,60 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PLATFORM="tg5040"
+PAK_DIR="$PROJECT_DIR/ports/$PLATFORM/pak"
+DIST_DIR="$PROJECT_DIR/dist"
+BUILD_DIR="$PROJECT_DIR/build/$PLATFORM"
+PAK_JSON="$PROJECT_DIR/pak.json"
 
-echo "=== Packaging Nimbus.pak ==="
+APP_NAME="$(grep -E '"name"' "$PAK_JSON" | head -n1 | cut -d'"' -f4)"
+RELEASE_FILENAME="$(grep -E '"release_filename"' "$PAK_JSON" | head -n1 | cut -d'"' -f4)"
 
-# Copy binary
-cp "$PROJECT_DIR/build/tg5040/nimbus" "$PROJECT_DIR/ports/tg5040/pak/bin/nimbus"
-chmod +x "$PROJECT_DIR/ports/tg5040/pak/bin/nimbus"
+echo ""
+echo "=== Packaging ${APP_NAME} for ${PLATFORM} ==="
+echo ""
 
-# Copy CA certs
-mkdir -p "$PROJECT_DIR/ports/tg5040/pak/lib"
-cp "$PROJECT_DIR/build/tg5040/lib/cacert.pem" "$PROJECT_DIR/ports/tg5040/pak/lib/cacert.pem"
+# Validate
+if [ -z "$APP_NAME" ] || [ -z "$RELEASE_FILENAME" ]; then
+    echo "ERROR: Failed to read name or release_filename from pak.json"
+    exit 1
+fi
 
-# Sync default location
-cp "$PROJECT_DIR/assets/default_location.txt" "$PROJECT_DIR/ports/tg5040/pak/assets/default_location.txt"
+if [ ! -f "$BUILD_DIR/nimbus" ]; then
+    echo "ERROR: Binary not found at $BUILD_DIR/nimbus — run 'make build' first"
+    exit 1
+fi
 
-# Create zip
-mkdir -p "$PROJECT_DIR/dist"
-cd "$PROJECT_DIR/ports/tg5040/pak"
-zip -r "$PROJECT_DIR/dist/Nimbus.tg5040.pak.zip".
+# Stage build artifacts into pak dir
+cp "$BUILD_DIR/nimbus" "$PAK_DIR/bin/nimbus"
+chmod +x "$PAK_DIR/bin/nimbus"
+
+mkdir -p "$PAK_DIR/lib"
+cp "$BUILD_DIR/lib/cacert.pem" "$PAK_DIR/lib/cacert.pem"
+
+# Create clean zip via temp dir (excludes.DS_Store)
+mkdir -p "$DIST_DIR"
+TMP_DIR="$DIST_DIR/tmp-package"
+rm -rf "$TMP_DIR"
+mkdir -p "$TMP_DIR"
+
+rsync -a --exclude='.DS_Store' "$PAK_DIR/" "$TMP_DIR/"
+
+# Validate
+if [ ! -f "$TMP_DIR/launch.sh" ]; then
+    echo "ERROR: Missing launch.sh in pak directory"
+    rm -rf "$TMP_DIR"
+    exit 1
+fi
+
+OUTPUT_ZIP="$DIST_DIR/$RELEASE_FILENAME"
+rm -f "$OUTPUT_ZIP"
+cd "$TMP_DIR"
+zip -r "$OUTPUT_ZIP" ./*
 cd "$PROJECT_DIR"
+rm -rf "$TMP_DIR"
 
-echo "=== Package: dist/Nimbus.tg5040.pak.zip ==="
+echo ""
+echo "=== Package complete ==="
+echo "Output: dist/$RELEASE_FILENAME"
+echo ""

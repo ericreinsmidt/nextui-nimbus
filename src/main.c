@@ -1791,9 +1791,8 @@ static void draw_page_dots(int count, int active, int x, int y) {
 
 static void show_weather_screen(void) {
     int running = 1;
-    int scroll_y = 0;
+    pakkit_scroll_state scroll = {0};
     int active_page = TAB_CURRENT;
-    int last_max_scroll = 0;
 
     while (running) {
         weather_data_t *weather = &g_weather_cache[g_current_location];
@@ -1817,24 +1816,21 @@ static void show_weather_screen(void) {
                                     load_weather_from_cache(g_current_location);
                                 }
                             }
-                            scroll_y = 0;
-                            last_max_scroll = 0;
+                            scroll = (pakkit_scroll_state){0};
                         }
                         break;
                     case AP_BTN_LEFT:
                         if (!ev.repeated) {
                             active_page--;
                             if (active_page < 0) active_page = TAB_COUNT - 1;
-                            scroll_y = 0;
-                            last_max_scroll = 0;
+                            scroll = (pakkit_scroll_state){0};
                         }
                         break;
                     case AP_BTN_RIGHT:
                         if (!ev.repeated) {
                             active_page++;
                             if (active_page >= TAB_COUNT) active_page = 0;
-                            scroll_y = 0;
-                            last_max_scroll = 0;
+                            scroll = (pakkit_scroll_state){0};
                         }
                         break;
                     case AP_BTN_L1:
@@ -1857,8 +1853,7 @@ static void show_weather_screen(void) {
                             } else {
                                 pakkit_message("No WiFi and no cached data\nfor this location.", "OK");
                             }
-                            scroll_y = 0;
-                            last_max_scroll = 0;
+                            scroll = (pakkit_scroll_state){0};
                         }
                         break;
                     case AP_BTN_R1:
@@ -1881,17 +1876,14 @@ static void show_weather_screen(void) {
                             } else {
                                 pakkit_message("No WiFi and no cached data\nfor this location.", "OK");
                             }
-                            scroll_y = 0;
-                            last_max_scroll = 0;
+                            scroll = (pakkit_scroll_state){0};
                         }
                         break;
                     case AP_BTN_UP:
-                        scroll_y -= SCROLL_STEP;
-                        if (scroll_y < 0) scroll_y = 0;
+                        pakkit_scroll_handle_input(&scroll, -1, SCROLL_STEP);
                         break;
                     case AP_BTN_DOWN:
-                        scroll_y += SCROLL_STEP;
-                        if (scroll_y > last_max_scroll) scroll_y = last_max_scroll;
+                        pakkit_scroll_handle_input(&scroll, 1, SCROLL_STEP);
                         break;
                     default:
                         break;
@@ -1976,7 +1968,7 @@ static void show_weather_screen(void) {
         SDL_RenderSetClipRect(ap__g.renderer, &clip);
 
         if (!weather->valid) {
-            scroll_y = 0;
+            scroll.scroll_y = 0;
             ap_draw_text(font_med, "No weather data", pad * 3,
                          content_y + content_h / 3, hint_color);
             TTF_Font *font_small = ap_get_font(AP_FONT_SMALL);
@@ -1987,24 +1979,21 @@ static void show_weather_screen(void) {
             int total_h = 0;
             switch (active_page) {
                 case TAB_CURRENT:
-                    draw_tab_current(weather, content_y, content_h, scroll_y, &total_h);
+                    draw_tab_current(weather, content_y, content_h, scroll.scroll_y, &total_h);
                     break;
                 case TAB_FORECAST:
-                    draw_tab_forecast(weather, content_y, content_h, scroll_y, &total_h);
+                    draw_tab_forecast(weather, content_y, content_h, scroll.scroll_y, &total_h);
                     break;
                 case TAB_HOURLY:
-                    draw_tab_hourly(weather, content_y, content_h, scroll_y, &total_h);
+                    draw_tab_hourly(weather, content_y, content_h, scroll.scroll_y, &total_h);
                     break;
                 case TAB_ASTRO:
-                    draw_tab_astro(weather, content_y, content_h, scroll_y, &total_h);
+                    draw_tab_astro(weather, content_y, content_h, scroll.scroll_y, &total_h);
                     break;
             }
 
-            /* Clamp scroll and cache max */
-            int max_scroll = total_h - content_h;
-            if (max_scroll < 0) max_scroll = 0;
-            last_max_scroll = max_scroll;
-            if (scroll_y > max_scroll) scroll_y = max_scroll;
+            /* Update cached max_scroll for next frame's input clamping */
+            pakkit_scroll_update(&scroll, total_h, content_h);
         }
 
         SDL_RenderSetClipRect(ap__g.renderer, NULL);
