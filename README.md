@@ -2,13 +2,13 @@
 
 ![Nimbus](assets/logo.png)
 
-A weather app for [NextUI](https://github.com/LoveRetro/NextUI) on TrimUI handheld devices.
-
-Built with [PakKit](https://github.com/ericreinsmidt/pakkit) and [Apostrophe](https://github.com/Helaas/Apostrophe). Weather data provided by [WeatherAPI.com](https://www.weatherapi.com).
-
 ![GitHub release](https://img.shields.io/github/v/release/ericreinsmidt/nextui-nimbus)
 ![GitHub downloads](https://img.shields.io/github/downloads/ericreinsmidt/nextui-nimbus/total)
 ![License](https://img.shields.io/github/license/ericreinsmidt/nextui-nimbus)
+
+A weather app for [NextUI](https://github.com/LoveRetro/NextUI) on TrimUI handheld devices.
+
+Built with [PakKit](https://github.com/ericreinsmidt/pakkit) and [Apostrophe](https://github.com/Helaas/Apostrophe). Weather data provided by [WeatherAPI.com](https://www.weatherapi.com).
 
 ## Features
 
