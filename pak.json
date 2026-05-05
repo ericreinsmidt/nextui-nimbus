@@ -1,6 +1,6 @@
 {
   "name": "Nimbus",
-  "version": "v1.0.0",
+  "version": "v1.1.0",
   "type": "TOOL",
   "description": "Weather app for NextUI devices.",
   "author": "Eric Reinsmidt",
@@ -13,7 +13,8 @@
     "v1.0.0": "Offline cache with cached data indicator, L1/R1 error handling, WiFi retry/continue on launch, new logo and splash screen.",
     "v0.2.0": "PakKit keyboard for location search, updated README, pinned PakKit v0.2.0.",
     "v0.1.1": "Updated UI, squashed some bugs.",
-    "v0.1.0": "Initial version."
+    "v0.1.0": "Initial version.",
+    "v1.1.0": "Scroll bounce fix using PakKit scroll helper, standardized build system."
   },
   "screenshots": [
     "assets/logo.png",

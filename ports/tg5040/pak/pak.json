@@ -1,6 +1,6 @@
 {
   "name": "Nimbus",
-  "version": "v1.0.0",
+  "version": "v1.1.0",
   "type": "TOOL",
   "description": "Weather app for NextUI devices.",
   "author": "Eric Reinsmidt",
