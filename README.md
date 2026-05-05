@@ -163,12 +163,9 @@ Stage CA certificates (only needed once):
 
 ### Package
 
-Copy the binary and CA certs into the pak:
+    make package
 
-    cp build/tg5040/nimbus ports/tg5040/pak/bin/nimbus
-    chmod +x ports/tg5040/pak/bin/nimbus
-    mkdir -p ports/tg5040/pak/lib
-    cp build/tg5040/lib/cacert.pem ports/tg5040/pak/lib/cacert.pem
+This builds the binary, stages all artifacts, and creates dist/Nimbus.tg5040.pak.zip.
 
 ### Deploy
 
