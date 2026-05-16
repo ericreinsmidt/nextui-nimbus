@@ -55,7 +55,7 @@
 #define DEFAULT_HINT_G   140
 #define DEFAULT_HINT_B   150
 
-#define SCROLL_STEP      20
+#define SCROLL_STEP      PAKKIT_SCROLL_STEP
 #define SETUP_SERVER_PORT 8090
 
 #define TAB_CURRENT  0
@@ -1890,6 +1890,8 @@ static void show_weather_screen(void) {
                 }
             }
         }
+
+        pakkit_scroll_animate(&scroll);
 
         ap_clear_screen();
         ap_draw_background();

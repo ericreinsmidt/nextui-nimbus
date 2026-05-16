@@ -29,6 +29,7 @@ Built with [PakKit](https://github.com/ericreinsmidt/pakkit) and [Apostrophe](ht
 - **Auto-detect location** -- uses IP geolocation on first launch if no location is configured
 - **Weather condition icons** -- fetched from WeatherAPI and cached locally
 - **4-page layout** -- swipe between Current, Forecast, Hourly, and Sun & Moon with page dot indicator
+- **Smooth scrolling** -- animated scroll with easing for a polished feel
 - **Minimal UI** -- clean PakKit screens with subtle button hints
 
 ## Supported Devices
